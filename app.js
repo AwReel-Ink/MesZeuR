@@ -1360,8 +1360,8 @@ async function importODS(file) {
 
                 // Enregistrer les heures manuelles pour ce mois (convertir heures en minutes pour stockage)
                 if (isManuel && monthKey && manuelHeures > 0) {
-                    heuresManuelles[monthKey] = Math.round(manuelHeures * 60);
-                    console.log(`Import mois manuel: ${monthKey} = ${manuelHeures}h (${heuresManuelles[monthKey]} min)`);
+                    heuresManuelles[monthKey] = manuelHeures;
+                    console.log(`Import mois manuel: ${monthKey} = ${manuelHeures}h`);
                 }
             }
         }
