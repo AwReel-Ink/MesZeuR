@@ -1,8 +1,8 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
-// Version 1.3.4
+// Version 1.3.5
 
-const APP_VERSION = '1.3.4';
+const APP_VERSION = '1.3.5';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
 
@@ -458,10 +458,18 @@ function updateDateFinVisibility() {
 
 async function saveEmploi(event) {
     event.preventDefault();
-    
+
     const isCDD = elements.emploiCdi.checked;
-    
+    const id = elements.emploiId.value ? parseInt(elements.emploiId.value) : null;
+
+    // 🔧 CORRECTION : Récupérer l'emploi existant pour conserver heuresManuelles
+    let emploiExistant = {};
+    if (id) {
+        emploiExistant = await getFromStore('emplois', id) || {};
+    }
+
     const emploi = {
+        ...emploiExistant,  // ← Conserve heuresManuelles et autres données
         entrepriseId: parseInt(elements.emploiEntrepriseId.value),
         poste: elements.emploiPoste.value.trim(),
         dateDebut: elements.emploiDateDebut.value,
@@ -471,21 +479,21 @@ async function saveEmploi(event) {
         pauseRemuneree: elements.emploiPauseRemuneree.checked,
         lastModified: new Date().toISOString()
     };
-    
+
     try {
-        if (elements.emploiId.value) {
-            emploi.id = parseInt(elements.emploiId.value);
+        if (id) {
+            emploi.id = id;
             await updateInStore('emplois', emploi);
             showToast('Emploi modifié', 'success');
         } else {
             await addToStore('emplois', emploi);
             showToast('Emploi ajouté', 'success');
         }
-        
+
         // Update entreprise lastActivity
         currentEntreprise.lastActivity = new Date().toISOString();
         await updateInStore('entreprises', currentEntreprise);
-        
+
         showPage('page-emplois', currentEntreprise.nom);
         loadEmplois(currentEntreprise.id);
     } catch (error) {
