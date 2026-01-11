@@ -1,8 +1,8 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
-// Version 1.3.6
+// Version 1.3.7
 
-const APP_VERSION = '1.3.6';
+const APP_VERSION = '1.3.7';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
 
@@ -1165,20 +1165,29 @@ async function downloadODS(content, filename) {
 // ===== Import ODS =====
 async function importODS(file) {
     try {
-        const content = await file.text();
+        // Charger le fichier ODS comme un ZIP
+        const zip = await JSZip.loadAsync(file);
         
-        // Parse the FODS XML
+        // Extraire content.xml du ZIP
+        const contentFile = zip.file('content.xml');
+        if (!contentFile) {
+            showToast('Fichier ODS invalide', 'error');
+            return;
+        }
+        const contentXml = await contentFile.async('string');
+        
+        // Parser le XML
         const parser = new DOMParser();
-        const doc = parser.parseFromString(content, 'text/xml');
-        
+        const doc = parser.parseFromString(contentXml, 'text/xml');
+
         // Extract data from sheets
         const tables = doc.querySelectorAll('table\\:table, table');
-        
+
         if (tables.length === 0) {
             showToast('Format de fichier invalide', 'error');
             return;
         }
-        
+
         // Find info sheet
         let entrepriseNom = '';
         let entrepriseAdresse = '';
@@ -1188,18 +1197,21 @@ async function importODS(file) {
         let emploiDateFin = '';
         let emploiTrajet = 0;
         let emploiPauseRemuneree = false;
-        
+
         tables.forEach(table => {
             const tableName = table.getAttribute('table:name') || '';
-            
+
             if (tableName === 'Informations') {
                 const rows = table.querySelectorAll('table\\:table-row, table-row');
                 rows.forEach(row => {
                     const cells = row.querySelectorAll('table\\:table-cell, table-cell');
                     if (cells.length >= 2) {
-                        const label = cells[0].textContent.trim();
-                        const value = cells[1].textContent.trim();
-                        
+                        // Récupérer le texte des cellules (dans les éléments text:p)
+                        const labelEl = cells[0].querySelector('text\\:p, p');
+                        const valueEl = cells[1].querySelector('text\\:p, p');
+                        const label = labelEl ? labelEl.textContent.trim() : cells[0].textContent.trim();
+                        const value = valueEl ? valueEl.textContent.trim() : cells[1].textContent.trim();
+
                         switch (label) {
                             case 'Entreprise': entrepriseNom = value; break;
                             case 'Adresse': entrepriseAdresse = value; break;
@@ -1214,16 +1226,16 @@ async function importODS(file) {
                 });
             }
         });
-        
+
         if (!entrepriseNom || !emploiPoste) {
             showToast('Données incomplètes dans le fichier', 'error');
             return;
         }
-        
+
         // Find or create entreprise
         const entreprises = await getAllFromStore('entreprises');
         let entreprise = entreprises.find(e => e.nom === entrepriseNom && e.adresse === entrepriseAdresse);
-        
+
         if (!entreprise) {
             const id = await addToStore('entreprises', {
                 nom: entrepriseNom,
@@ -1232,7 +1244,7 @@ async function importODS(file) {
             });
             entreprise = await getByKey('entreprises', id);
         }
-        
+
         // Create emploi
         const emploiId = await addToStore('emplois', {
             entrepriseId: entreprise.id,
@@ -1244,29 +1256,42 @@ async function importODS(file) {
             pauseRemuneree: emploiPauseRemuneree,
             lastModified: new Date().toISOString()
         });
-        
+
         // Import heures from monthly sheets
         let heuresImported = 0;
-        
-        tables.forEach(table => {
+
+        for (const table of tables) {
             const tableName = table.getAttribute('table:name') || '';
-            
+
             if (tableName !== 'Informations') {
                 const rows = table.querySelectorAll('table\\:table-row, table-row');
-                
-                rows.forEach((row, index) => {
-                    if (index === 0) return; // Skip header
-                    
+
+                for (let index = 0; index < rows.length; index++) {
+                    if (index === 0) continue; // Skip header
+
+                    const row = rows[index];
                     const cells = row.querySelectorAll('table\\:table-cell, table-cell');
-                    if (cells.length >= 6) {
-                        const dateStr = parseImportDate(cells[0].textContent.trim());
-                        const repos = cells[2].textContent.trim() === 'Oui';
-                        const debut = cells[3].textContent.trim();
-                        const fin = cells[4].textContent.trim();
-                        const pause = cells[5].textContent.trim();
-                        
-                        if (dateStr && dateStr !== 'Total du mois') {
-                            addToStore('heures', {
+                    
+                    // Gérer les cellules répétées (table:number-columns-repeated)
+                    const cellValues = [];
+                    cells.forEach(cell => {
+                        const repeated = parseInt(cell.getAttribute('table:number-columns-repeated')) || 1;
+                        const textEl = cell.querySelector('text\\:p, p');
+                        const value = textEl ? textEl.textContent.trim() : cell.textContent.trim();
+                        for (let i = 0; i < repeated && cellValues.length < 10; i++) {
+                            cellValues.push(value);
+                        }
+                    });
+
+                    if (cellValues.length >= 6) {
+                        const dateStr = parseImportDate(cellValues[0]);
+                        const repos = cellValues[2] === 'Oui';
+                        const debut = cellValues[3];
+                        const fin = cellValues[4];
+                        const pause = cellValues[5];
+
+                        if (dateStr && !cellValues[0].includes('Total')) {
+                            await addToStore('heures', {
                                 emploiId: emploiId,
                                 date: dateStr,
                                 repos: repos,
@@ -1277,15 +1302,20 @@ async function importODS(file) {
                             heuresImported++;
                         }
                     }
-                });
+                }
             }
-        });
-        
+        }
+
         showToast(`Import réussi: ${heuresImported} entrées`, 'success');
         
+        // Rafraîchir l'affichage
+        if (typeof loadEntreprises === 'function') {
+            await loadEntreprises();
+        }
+
     } catch (error) {
-        showToast('Erreur lors de l\'import', 'error');
-        console.error(error);
+        console.error('Erreur import ODS:', error);
+        showToast('Erreur lors de l\'import: ' + error.message, 'error');
     }
 }
 
