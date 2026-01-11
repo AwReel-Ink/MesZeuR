@@ -1286,10 +1286,10 @@ async function importODS(file) {
 
             if (tableName !== 'Informations') {
                 const rows = table.querySelectorAll('table\\:table-row, table-row');
-                
+
                 // Vérifier si c'est un mois avec heures manuelles
                 let isManuel = false;
-                let manuelMinutes = 0;
+                let manuelHeures = 0;
                 let monthKey = '';
 
                 // Parser le nom de la feuille pour extraire le mois (ex: "janvier 2020")
@@ -1324,9 +1324,16 @@ async function importODS(file) {
                         continue;
                     }
 
-                    // Récupérer la valeur des heures manuelles (en minutes)
+                    // Récupérer la valeur des heures manuelles (nouveau format: heures décimales)
+                    if (isManuel && cellValues[0] === 'Total du mois (heures)') {
+                        manuelHeures = parseFloat(cellValues[1]) || 0;
+                        continue;
+                    }
+                    
+                    // Rétrocompatibilité avec ancien format (minutes)
                     if (isManuel && cellValues[0] === 'Total du mois (minutes)') {
-                        manuelMinutes = parseInt(cellValues[1]) || 0;
+                        const minutes = parseInt(cellValues[1]) || 0;
+                        manuelHeures = minutes / 60;
                         continue;
                     }
 
@@ -1351,9 +1358,10 @@ async function importODS(file) {
                     }
                 }
 
-                // Enregistrer les heures manuelles pour ce mois
-                if (isManuel && monthKey && manuelMinutes > 0) {
-                    heuresManuelles[monthKey] = manuelMinutes;
+                // Enregistrer les heures manuelles pour ce mois (convertir heures en minutes pour stockage)
+                if (isManuel && monthKey && manuelHeures > 0) {
+                    heuresManuelles[monthKey] = Math.round(manuelHeures * 60);
+                    console.log(`Import mois manuel: ${monthKey} = ${manuelHeures}h (${heuresManuelles[monthKey]} min)`);
                 }
             }
         }
