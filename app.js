@@ -1,5 +1,6 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
+// Version 1.3.2
 
 const APP_VERSION = '1.0.0';
 const DB_NAME = 'MesZeuRDB';
