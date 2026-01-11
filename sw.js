@@ -1,7 +1,7 @@
 // MesZeuR Service Worker
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const CACHE_NAME = 'meszeur-v1.3.4';
+const CACHE_NAME = 'meszeur-v1.3.5';
 const BASE_PATH = '/MesZeuR';
 const ASSETS_TO_CACHE = [
     `${BASE_PATH}/`,
@@ -101,3 +101,4 @@ self.addEventListener('message', (event) => {
         self.skipWaiting();
     }
 });
+
