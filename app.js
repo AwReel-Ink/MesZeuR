@@ -1091,19 +1091,21 @@ function generateODSContent(entreprise, emploi, heures) {
     </table:table>`;
 
     sortedMonths.forEach(monthKey => {
-        const [year, month] = monthKey.split('-');
-        const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
+    const [year, month] = monthKey.split('-');
+    const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
-        if (heuresManuelles[monthKey] !== undefined) {
-            const totalMinutes = heuresManuelles[monthKey];
-            console.log(`Export mois manuel: ${monthKey} = ${totalMinutes} min`);
-            
-            sheets += `<table:table table:name="${escapeXml(monthName)}">
-                <table:table-row>${cell('Type de saisie')}${cell('Heures manuelles')}</table:table-row>
-                <table:table-row>${cell('Total du mois (minutes)')}${cell(totalMinutes)}</table:table-row>
-                <table:table-row>${cell('Total du mois')}${cell(minutesToTime(totalMinutes))}</table:table-row>
-            </table:table>`;
-        } else if (monthlyData[monthKey]) {
+    if (heuresManuelles[monthKey] !== undefined) {
+        const heuresDecimales = heuresManuelles[monthKey];
+        // Convertir heures décimales en minutes pour l'export
+        const totalMinutes = Math.round(heuresDecimales * 60);
+        console.log(`Export mois manuel: ${monthKey} = ${heuresDecimales}h = ${totalMinutes} min`);
+
+        sheets += `<table:table table:name="${escapeXml(monthName)}">
+            <table:table-row>${cell('Type de saisie')}${cell('Heures manuelles')}</table:table-row>
+            <table:table-row>${cell('Total du mois (minutes)')}${cell(totalMinutes)}</table:table-row>
+            <table:table-row>${cell('Total du mois')}${cell(minutesToTime(totalMinutes))}</table:table-row>
+        </table:table>`;
+    } else if (monthlyData[monthKey]) {
             const monthHeures = monthlyData[monthKey];
             console.log(`Export mois détaillé: ${monthKey} = ${monthHeures.length} jours`);
             
