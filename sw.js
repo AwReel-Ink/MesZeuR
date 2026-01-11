@@ -1,7 +1,7 @@
 // MesZeuR Service Worker
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const CACHE_NAME = 'meszeur-v1.0.0';
+const CACHE_NAME = 'meszeur-v1.3.2';
 const ASSETS_TO_CACHE = [
     '/',
     '/index.html',
