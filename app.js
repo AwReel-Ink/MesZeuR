@@ -1052,6 +1052,28 @@ function generateODSContent(entreprise, emploi, heures) {
         monthlyData[monthKey].push(heure);
     });
 
+    // Récupérer les heures manuelles
+    const heuresManuelles = emploi.heuresManuelles || {};
+
+    // DEBUG - Afficher dans la console
+    console.log('=== DEBUG EXPORT ===');
+    console.log('Emploi:', emploi.poste);
+    console.log('heuresManuelles de emploi:', emploi.heuresManuelles);
+    console.log('Object.keys(heuresManuelles):', Object.keys(heuresManuelles));
+    console.log('Object.keys(monthlyData):', Object.keys(monthlyData));
+    console.log('Nombre heures détaillées:', heures.length);
+
+    // Fusionner tous les mois
+    const allMonths = new Set([
+        ...Object.keys(monthlyData),
+        ...Object.keys(heuresManuelles)
+    ]);
+    const sortedMonths = Array.from(allMonths).sort();
+    
+    console.log('Tous les mois fusionnés:', sortedMonths);
+    console.log('Nombre total de mois:', sortedMonths.length);
+    console.log('====================');
+
     let sheets = '';
 
     const cell = (value) => `<table:table-cell office:value-type="string"><text:p>${escapeXml(String(value ?? ''))}</text:p></table:table-cell>`;
@@ -1068,23 +1090,23 @@ function generateODSContent(entreprise, emploi, heures) {
         <table:table-row>${cell('Pause rémunérée')}${cell(emploi.pauseRemuneree ? 'Oui' : 'Non')}</table:table-row>
     </table:table>`;
 
-    // Récupérer les heures manuelles
-    const heuresManuelles = emploi.heuresManuelles || {};
-
-    Object.keys(monthlyData).sort().forEach(monthKey => {
-        const monthHeures = monthlyData[monthKey];
+    sortedMonths.forEach(monthKey => {
         const [year, month] = monthKey.split('-');
         const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
-        // Vérifier si ce mois a des heures manuelles
         if (heuresManuelles[monthKey] !== undefined) {
-            // Mois avec saisie manuelle
+            const totalMinutes = heuresManuelles[monthKey];
+            console.log(`Export mois manuel: ${monthKey} = ${totalMinutes} min`);
+            
             sheets += `<table:table table:name="${escapeXml(monthName)}">
                 <table:table-row>${cell('Type de saisie')}${cell('Heures manuelles')}</table:table-row>
-                <table:table-row>${cell('Total du mois')}${cell(heuresManuelles[monthKey] + 'h')}</table:table-row>
+                <table:table-row>${cell('Total du mois (minutes)')}${cell(totalMinutes)}</table:table-row>
+                <table:table-row>${cell('Total du mois')}${cell(minutesToTime(totalMinutes))}</table:table-row>
             </table:table>`;
-        } else {
-            // Mois avec détail journalier
+        } else if (monthlyData[monthKey]) {
+            const monthHeures = monthlyData[monthKey];
+            console.log(`Export mois détaillé: ${monthKey} = ${monthHeures.length} jours`);
+            
             sheets += `<table:table table:name="${escapeXml(monthName)}">
                 <table:table-row>${cell('Date')}${cell('Jour')}${cell('Repos')}${cell('Début')}${cell('Fin')}${cell('Pause')}${cell('Total')}</table:table-row>`;
 
@@ -1163,11 +1185,12 @@ async function downloadODS(content, filename) {
 }
 
 // ===== Import ODS =====
+// ===== Import ODS =====
 async function importODS(file) {
     try {
         // Charger le fichier ODS comme un ZIP
         const zip = await JSZip.loadAsync(file);
-        
+
         // Extraire content.xml du ZIP
         const contentFile = zip.file('content.xml');
         if (!contentFile) {
@@ -1175,7 +1198,7 @@ async function importODS(file) {
             return;
         }
         const contentXml = await contentFile.async('string');
-        
+
         // Parser le XML
         const parser = new DOMParser();
         const doc = parser.parseFromString(contentXml, 'text/xml');
@@ -1206,7 +1229,6 @@ async function importODS(file) {
                 rows.forEach(row => {
                     const cells = row.querySelectorAll('table\\:table-cell, table-cell');
                     if (cells.length >= 2) {
-                        // Récupérer le texte des cellules (dans les éléments text:p)
                         const labelEl = cells[0].querySelector('text\\:p, p');
                         const valueEl = cells[1].querySelector('text\\:p, p');
                         const label = labelEl ? labelEl.textContent.trim() : cells[0].textContent.trim();
@@ -1245,34 +1267,40 @@ async function importODS(file) {
             entreprise = await getByKey('entreprises', id);
         }
 
-        // Create emploi
-        const emploiId = await addToStore('emplois', {
-            entrepriseId: entreprise.id,
-            poste: emploiPoste,
-            dateDebut: emploiDateDebut,
-            cdi: emploiCdi,
-            dateFin: emploiDateFin || null,
-            trajet: emploiTrajet,
-            pauseRemuneree: emploiPauseRemuneree,
-            lastModified: new Date().toISOString()
-        });
+        // Collecter les heures manuelles avant de créer l'emploi
+        const heuresManuelles = {};
 
         // Import heures from monthly sheets
         let heuresImported = 0;
+        const heuresDetaillees = [];
 
         for (const table of tables) {
             const tableName = table.getAttribute('table:name') || '';
 
             if (tableName !== 'Informations') {
                 const rows = table.querySelectorAll('table\\:table-row, table-row');
+                
+                // Vérifier si c'est un mois avec heures manuelles
+                let isManuel = false;
+                let manuelMinutes = 0;
+                let monthKey = '';
+
+                // Parser le nom de la feuille pour extraire le mois (ex: "janvier 2020")
+                const monthMatch = tableName.match(/^(\w+)\s+(\d{4})$/);
+                if (monthMatch) {
+                    const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 
+                                       'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+                    const monthIndex = monthNames.indexOf(monthMatch[1].toLowerCase());
+                    if (monthIndex !== -1) {
+                        monthKey = `${monthMatch[2]}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                    }
+                }
 
                 for (let index = 0; index < rows.length; index++) {
-                    if (index === 0) continue; // Skip header
-
                     const row = rows[index];
                     const cells = row.querySelectorAll('table\\:table-cell, table-cell');
-                    
-                    // Gérer les cellules répétées (table:number-columns-repeated)
+
+                    // Gérer les cellules répétées
                     const cellValues = [];
                     cells.forEach(cell => {
                         const repeated = parseInt(cell.getAttribute('table:number-columns-repeated')) || 1;
@@ -1283,7 +1311,20 @@ async function importODS(file) {
                         }
                     });
 
-                    if (cellValues.length >= 6) {
+                    // Détecter les heures manuelles
+                    if (cellValues[0] === 'Type de saisie' && cellValues[1] === 'Heures manuelles') {
+                        isManuel = true;
+                        continue;
+                    }
+
+                    // Récupérer la valeur des heures manuelles (en minutes)
+                    if (isManuel && cellValues[0] === 'Total du mois (minutes)') {
+                        manuelMinutes = parseInt(cellValues[1]) || 0;
+                        continue;
+                    }
+
+                    // Si ce n'est pas manuel, importer les heures détaillées
+                    if (!isManuel && index > 0 && cellValues.length >= 6) {
                         const dateStr = parseImportDate(cellValues[0]);
                         const repos = cellValues[2] === 'Oui';
                         const debut = cellValues[3];
@@ -1291,8 +1332,7 @@ async function importODS(file) {
                         const pause = cellValues[5];
 
                         if (dateStr && !cellValues[0].includes('Total')) {
-                            await addToStore('heures', {
-                                emploiId: emploiId,
+                            heuresDetaillees.push({
                                 date: dateStr,
                                 repos: repos,
                                 debut: debut,
@@ -1303,11 +1343,42 @@ async function importODS(file) {
                         }
                     }
                 }
+
+                // Enregistrer les heures manuelles pour ce mois
+                if (isManuel && monthKey && manuelMinutes > 0) {
+                    heuresManuelles[monthKey] = manuelMinutes;
+                }
             }
         }
 
-        showToast(`Import réussi: ${heuresImported} entrées`, 'success');
-        
+        // Créer l'emploi avec les heures manuelles
+        const emploiId = await addToStore('emplois', {
+            entrepriseId: entreprise.id,
+            poste: emploiPoste,
+            dateDebut: emploiDateDebut,
+            cdi: emploiCdi,
+            dateFin: emploiDateFin || null,
+            trajet: emploiTrajet,
+            pauseRemuneree: emploiPauseRemuneree,
+            heuresManuelles: heuresManuelles,
+            lastModified: new Date().toISOString()
+        });
+
+        // Enregistrer les heures détaillées
+        for (const heure of heuresDetaillees) {
+            await addToStore('heures', {
+                emploiId: emploiId,
+                ...heure
+            });
+        }
+
+        const nbMoisManuels = Object.keys(heuresManuelles).length;
+        let message = `Import réussi: ${heuresImported} entrées`;
+        if (nbMoisManuels > 0) {
+            message += `, ${nbMoisManuels} mois manuels`;
+        }
+        showToast(message, 'success');
+
         // Rafraîchir l'affichage
         if (typeof loadEntreprises === 'function') {
             await loadEntreprises();
