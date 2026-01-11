@@ -767,6 +767,12 @@ function minutesToTime(minutes) {
     return `${h}H${m.toString().padStart(2, '0')}`;
 }
 
+function decimalHoursToHHMM(decimalHours) {
+    const hours = Math.floor(decimalHours);
+    const minutes = Math.round((decimalHours - hours) * 60);
+    return `${hours}H${minutes.toString().padStart(2, '0')}`;
+}
+
 function calculateTotals() {
     let totalSemaine = 0;
     let totalSemaineAvecPauses = 0;
