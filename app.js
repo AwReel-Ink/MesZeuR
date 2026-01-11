@@ -2,7 +2,7 @@
 // © 2026 LEROY Aurélien - Tous droits réservés
 // Version 1.3.3
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.3.3';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
 
@@ -1691,4 +1691,5 @@ if (document.readyState === 'loading') {
 } else {
     initApp();
 }
+
 
