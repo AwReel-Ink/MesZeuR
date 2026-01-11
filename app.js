@@ -1,8 +1,8 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
-// Version 1.4.0
+// Version 1.4.1
 
-const APP_VERSION = '1.4.0';
+const APP_VERSION = '1.4.1';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
 
@@ -1292,16 +1292,20 @@ async function importODS(file) {
                 let manuelHeures = 0;
                 let monthKey = '';
 
-                // Parser le nom de la feuille pour extraire le mois (ex: "janvier 2020")
-                const monthMatch = tableName.match(/^([a-zA-ZéèêëàâäùûüïîôöçÉÈÊËÀÂÄÙÛÜÏÎÔÖÇ]+)\s+(\d{4})$/);
+                // Parser le nom de la feuille pour extraire le mois
+                // Accepte: "janvier 2020", "janvier_2020", "janvier 2020 (Manuel)", "janvier_2020 (Manuel)"
+                const cleanTableName = tableName.replace(/\s*\(Manuel\)\s*$/, '').trim();
+                const monthMatch = cleanTableName.match(/^([a-zA-ZéèêëàâäùûüïîôöçÉÈÊËÀÂÄÙÛÜÏÎÔÖÇ]+)[\s_]+(\d{4})$/);
+
                 if (monthMatch) {
-                    const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 
-                                       'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-                    const monthIndex = monthNames.indexOf(monthMatch[1].toLowerCase());
-                    if (monthIndex !== -1) {
-                        monthKey = `${monthMatch[2]}-${(monthIndex + 1).toString().padStart(2, '0')}`;
+                  const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 
+                                    'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+                  const monthIndex = monthNames.indexOf(monthMatch[1].toLowerCase());
+                  if (monthIndex !== -1) {
+                     monthKey = `${monthMatch[2]}-${(monthIndex + 1).toString().padStart(2, '0')}`;
                     }
                 }
+
 
                 for (let index = 0; index < rows.length; index++) {
                     const row = rows[index];
@@ -1816,5 +1820,4 @@ if (document.readyState === 'loading') {
 } else {
     initApp();
 }
-
 
