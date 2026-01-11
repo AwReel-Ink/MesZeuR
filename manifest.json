@@ -2,7 +2,7 @@
     "name": "MesZeuR - Suivi des heures de travail",
     "short_name": "MesZeuR",
     "description": "Application de suivi des heures de travail quotidiennes",
-    "version": "1.3.6",
+    "version": "1.3.7",
     "start_url": "/MesZeuR/",
     "display": "standalone",
     "background_color": "#ecf0f1",
