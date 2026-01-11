@@ -1095,15 +1095,17 @@ function generateODSContent(entreprise, emploi, heures) {
     const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
 
     if (heuresManuelles[monthKey] !== undefined) {
-    const heuresDecimales = heuresManuelles[monthKey];
-    console.log(`Export mois manuel: ${monthKey} = ${heuresDecimales}h`);
+        const heuresDecimales = heuresManuelles[monthKey];
+        console.log(`Export mois manuel: ${monthKey} = ${heuresDecimales}h`);
 
-    sheets += `<table:table table:name="${escapeXml(monthName)}">
-        <table:table-row>${cell('Type de saisie')}${cell('Heures manuelles')}</table:table-row>
-        <table:table-row>${cell('Total du mois (heures)')}${cell(heuresDecimales)}</table:table-row>
-        <table:table-row>${cell('Total du mois')}${cell(decimalHoursToHHMM(heuresDecimales))}</table:table-row>
-    </table:table>`;
-    } else if (monthlyData[monthKey]) {
+        sheets += `<table:table table:name="${escapeXml(monthName)}">
+            <table:table-row>${cell('Type de saisie')}${cell('Heures manuelles')}</table:table-row>
+            <table:table-row>${cell('Total du mois (heures)')}${cell(heuresDecimales)}</table:table-row>
+            <table:table-row>${cell('Total du mois')}${cell(decimalHoursToHHMM(heuresDecimales))}</table:table-row>
+        </table:table>`;  
+    }   
+        else if (monthlyData[monthKey]) {
+    
             const monthHeures = monthlyData[monthKey];
             console.log(`Export mois détaillé: ${monthKey} = ${monthHeures.length} jours`);
             
