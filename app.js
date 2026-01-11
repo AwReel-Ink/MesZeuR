@@ -1185,7 +1185,6 @@ async function downloadODS(content, filename) {
 }
 
 // ===== Import ODS =====
-// ===== Import ODS =====
 async function importODS(file) {
     try {
         // Charger le fichier ODS comme un ZIP
@@ -1286,7 +1285,7 @@ async function importODS(file) {
                 let monthKey = '';
 
                 // Parser le nom de la feuille pour extraire le mois (ex: "janvier 2020")
-                const monthMatch = tableName.match(/^(\w+)\s+(\d{4})$/);
+                const monthMatch = tableName.match(/^([a-zA-ZéèêëàâäùûüïîôöçÉÈÊËÀÂÄÙÛÜÏÎÔÖÇ]+)\s+(\d{4})$/);
                 if (monthMatch) {
                     const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 
                                        'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
