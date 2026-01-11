@@ -1,0 +1,42 @@
+{
+    "name": "MesZeuR - Suivi des heures de travail",
+    "short_name": "MesZeuR",
+    "description": "Application de suivi des heures de travail quotidiennes",
+    "version": "1.0.0",
+    "start_url": "/",
+    "display": "standalone",
+    "background_color": "#ecf0f1",
+    "theme_color": "#2c3e50",
+    "orientation": "portrait-primary",
+    "scope": "/",
+    "lang": "fr-FR",
+    "icons": [
+        {
+            "src": "icon192x192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "any maskable"
+        },
+        {
+            "src": "icon512x512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "any maskable"
+        }
+    ],
+    "categories": ["productivity", "utilities"],
+    "shortcuts": [
+        {
+            "name": "Travail",
+            "short_name": "Travail",
+            "description": "Accéder à mes entreprises",
+            "url": "/?action=travail",
+            "icons": [
+                {
+                    "src": "icon192x192.png",
+                    "sizes": "192x192"
+                }
+            ]
+        }
+    ]
+}

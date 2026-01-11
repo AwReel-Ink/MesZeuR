@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="theme-color" content="#2c3e50">
+    <title>MesZeuR - Suivi des heures de travail</title>
+    <link rel="manifest" href="manifest.json">
+    <link rel="icon" type="image/png" sizes="192x192" href="icon192x192.png">
+    <link rel="apple-touch-icon" href="icon192x192.png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div id="app">
+        <!-- Header -->
+        <header id="header">
+            <button id="btn-back" class="btn-icon hidden" aria-label="Retour">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path fill="currentColor" d="M20 11H7.83l5.59-5.59L12 4l-8 8 8 8 1.41-1.41L7.83 13H20v-2z"/>
+                </svg>
+            </button>
+            <h1 id="page-title">MesZeuR</h1>
+            <button id="btn-settings" class="btn-icon" aria-label="Paramètres">
+                <svg viewBox="0 0 24 24" width="24" height="24">
+                    <path fill="currentColor" d="M19.14 12.94c.04-.31.06-.63.06-.94 0-.31-.02-.63-.06-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.04.31-.06.63-.06.94s.02.63.06.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/>
+                </svg>
+            </button>
+        </header>
+
+        <!-- Main Content -->
+        <main id="main-content">
+            <!-- Page Accueil -->
+            <section id="page-home" class="page active">
+                <div class="home-container">
+                    <div class="logo-container">
+                        <img src="icon192x192.png" alt="MesZeuR Logo" class="app-logo">
+                    </div>
+                    <h2>Bienvenue sur MesZeuR</h2>
+                    <p class="subtitle">Gérez vos heures de travail simplement</p>
+                    <button id="btn-travail" class="btn-primary btn-large">
+                        <svg viewBox="0 0 24 24" width="32" height="32">
+                            <path fill="currentColor" d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/>
+                        </svg>
+                        <span>Travail</span>
+                    </button>
+                </div>
+            </section>
+
+            <!-- Page Liste Entreprises -->
+            <section id="page-entreprises" class="page">
+                <div class="page-header">
+                    <h2>Mes Entreprises</h2>
+                    <button id="btn-add-entreprise" class="btn-fab" aria-label="Ajouter une entreprise">
+                        <svg viewBox="0 0 24 24" width="24" height="24">
+                            <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                        </svg>
+                    </button>
+                </div>
+                <div id="liste-entreprises" class="list-container"></div>
+            </section>
+
+            <!-- Page Formulaire Entreprise -->
+            <section id="page-form-entreprise" class="page">
+                <h2 id="form-entreprise-title">Nouvelle Entreprise</h2>
+                <form id="form-entreprise" class="form-container">
+                    <input type="hidden" id="entreprise-id">
+                    <div class="form-group">
+                        <label for="entreprise-nom">Nom de l'entreprise *</label>
+                        <input type="text" id="entreprise-nom" required placeholder="Ex: ABC Corporation">
+                    </div>
+                    <div class="form-group">
+                        <label for="entreprise-adresse">Adresse / Ville *</label>
+                        <input type="text" id="entreprise-adresse" required placeholder="Ex: Paris ou 123 rue Example">
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="btn-cancel-entreprise" class="btn-secondary">Annuler</button>
+                        <button type="submit" class="btn-primary">Enregistrer</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Page Liste Emplois -->
+            <section id="page-emplois" class="page">
+                <div class="page-header">
+                    <div class="entreprise-info">
+                        <h2 id="emplois-entreprise-nom"></h2>
+                        <p id="emplois-entreprise-adresse" class="subtitle"></p>
+                    </div>
+                    <div class="header-actions">
+                        <button id="btn-edit-entreprise" class="btn-icon-small" aria-label="Modifier entreprise">
+                            <svg viewBox="0 0 24 24" width="20" height="20">
+                                <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                            </svg>
+                        </button>
+                        <button id="btn-delete-entreprise" class="btn-icon-small btn-danger" aria-label="Supprimer entreprise">
+                            <svg viewBox="0 0 24 24" width="20" height="20">
+                                <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                            </svg>
+                        </button>
+                        <button id="btn-add-emploi" class="btn-fab" aria-label="Ajouter un emploi">
+                            <svg viewBox="0 0 24 24" width="24" height="24">
+                                <path fill="currentColor" d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+                <div id="liste-emplois" class="list-container"></div>
+            </section>
+
+            <!-- Page Formulaire Emploi -->
+            <section id="page-form-emploi" class="page">
+                <h2 id="form-emploi-title">Nouvel Emploi</h2>
+                <form id="form-emploi" class="form-container">
+                    <input type="hidden" id="emploi-id">
+                    <input type="hidden" id="emploi-entreprise-id">
+                    <div class="form-group">
+                        <label for="emploi-poste">Intitulé du poste *</label>
+                        <input type="text" id="emploi-poste" required placeholder="Ex: Agent de production">
+                    </div>
+                    <div class="form-group">
+                        <label for="emploi-date-debut">Date de début *</label>
+                        <input type="date" id="emploi-date-debut" required>
+                    </div>
+                    <div class="form-group slider-group">
+                        <label>Type de contrat</label>
+                        <div class="slider-container">
+                            <span class="slider-label">CDI</span>
+                            <label class="switch">
+                                <input type="checkbox" id="emploi-cdi">
+                                <span class="slider-toggle"></span>
+                            </label>
+                            <span class="slider-label">Temps déterminé</span>
+                        </div>
+                    </div>
+                    <div class="form-group" id="group-date-fin">
+                        <label for="emploi-date-fin">Date de fin</label>
+                        <input type="date" id="emploi-date-fin">
+                    </div>
+                    <div class="form-group">
+                        <label for="emploi-trajet">Temps de trajet domicile-travail (minutes)</label>
+                        <input type="number" id="emploi-trajet" min="0" value="0" placeholder="Ex: 30">
+                    </div>
+                    <div class="form-group slider-group">
+                        <label>Pause rémunérée</label>
+                        <div class="slider-container">
+                            <span class="slider-label">Non</span>
+                            <label class="switch">
+                                <input type="checkbox" id="emploi-pause-remuneree">
+                                <span class="slider-toggle"></span>
+                            </label>
+                            <span class="slider-label">Oui</span>
+                        </div>
+                    </div>
+                    <div class="form-actions">
+                        <button type="button" id="btn-cancel-emploi" class="btn-secondary">Annuler</button>
+                        <button type="submit" class="btn-primary">Enregistrer</button>
+                    </div>
+                </form>
+            </section>
+
+            <!-- Page Saisie Heures -->
+            <section id="page-heures" class="page">
+                <div class="page-header heures-header">
+                    <div class="emploi-info">
+                        <h2 id="heures-emploi-poste"></h2>
+                        <p id="heures-emploi-contrat" class="subtitle"></p>
+                    </div>
+                    <div class="header-actions">
+                        <button id="btn-edit-emploi" class="btn-icon-small" aria-label="Modifier emploi">
+                            <svg viewBox="0 0 24 24" width="20" height="20">
+                                <path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34c-.39-.39-1.02-.39-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>
+                            </svg>
+                        </button>
+                        <button id="btn-delete-emploi" class="btn-icon-small btn-danger" aria-label="Supprimer emploi">
+                            <svg viewBox="0 0 24 24" width="20" height="20">
+                                <path fill="currentColor" d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z"/>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Navigation semaine -->
+<div class="week-navigation">
+    <button id="btn-prev-week" class="btn-icon" aria-label="Semaine précédente">
+        <svg viewBox="0 0 24 24" width="24" height="24">
+            <path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/>
+        </svg>
+    </button>
+    <input type="text" id="week-label" class="week-label-input" readonly>
+    <div id="week-picker-modal" class="week-picker-modal hidden">
+        <input type="date" id="week-date-picker">
+        <button id="week-picker-ok" class="btn btn-small">OK</button>
+    </div>
+    <button id="btn-next-week" class="btn-icon" aria-label="Semaine suivante">
+        <svg viewBox="0 0 24 24" width="24" height="24">
+            <path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
+        </svg>
+    </button>
+</div>
+
+                <!-- Tableau des heures -->
+                <div class="heures-table-container">
+                    <table id="heures-table" class="heures-table">
+                        <thead>
+                            <tr id="row-dates"></tr>
+                            <tr id="row-repos"></tr>
+                            <tr id="row-jours"></tr>
+                        </thead>
+                        <tbody>
+                            <tr id="row-pause">
+                                <td class="label-cell">Pause</td>
+                            </tr>
+                            <tr id="row-debut">
+                                <td class="label-cell">Début</td>
+                            </tr>
+                            <tr id="row-fin">
+                                <td class="label-cell">Fin</td>
+                            </tr>
+                            <tr id="row-total-jour">
+                                <td class="label-cell">Total jour</td>
+                            </tr>
+                        </tbody>
+                        <tfoot>
+                            <tr>
+                                <td class="label-cell">Total semaine</td>
+                                <td id="total-semaine" colspan="7" class="total-cell"></td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+                <!-- Heures manuelles -->
+<div class="heures-manuelles-section">
+    <label class="heures-manuelles-label">
+        <input type="checkbox" id="heures-manuelles-check">
+        Saisie manuelle du total mensuel
+    </label>
+    <div id="heures-manuelles-input" class="hidden">
+        <label>Heures du mois :</label>
+        <input type="number" id="heures-manuelles-value" min="0" step="0.01" placeholder="Ex: 151.67">
+        <span>heures</span>
+        <button id="btn-save-heures-manuelles" class="btn btn-small">Enregistrer</button>
+    </div>
+</div>
+
+                <!-- Résumés -->
+                <div class="summary-container">
+                    <div class="summary-card">
+                        <h4>Temps du mois</h4>
+                        <span id="total-mois" class="summary-value">0H00</span>
+                    </div>
+                    <div class="summary-card">
+                        <h4>Temps de l'année</h4>
+                        <span id="total-annee" class="summary-value">0H00</span>
+                    </div>
+                </div>
+
+                <div class="summary-container indicatif">
+                    <div class="summary-card secondary">
+                        <h4>Temps réel (+ pauses)</h4>
+                        <span id="temps-reel" class="summary-value">0H00</span>
+                    </div>
+                    <div class="summary-card secondary">
+                        <h4>Temps réel + trajets</h4>
+                        <span id="temps-reel-trajet" class="summary-value">0H00</span>
+                    </div>
+                </div>
+
+                <div class="summary-container cumul-container">
+                    <div class="summary-card cumul-total">
+                        <h4>Cumul total (toutes années)</h4>
+                        <span id="cumul-total-emploi" class="summary-value">0H00</span>
+                    </div>
+                    <div class="form-actions">
+                        <button id="btn-save-heures" class="btn-primary btn-large">
+                            <svg viewBox="0 0 24 24" width="24" height="24">
+                                <path fill="currentColor" d="M17 3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V7l-4-4zm-5 16c-1.66 0-3-1.34-3-3s1.34-3 3-3 3 1.34 3 3-1.34 3-3 3zm3-10H5V5h10v4z"/>
+                            </svg>
+                        Enregistrer
+                        </button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Page Paramètres -->
+            <section id="page-settings" class="page">
+                <h2>Paramètres</h2>
+                <div class="settings-container">
+                    <div class="settings-section">
+                        <h3>Export des données</h3>
+                        <p class="settings-description">Exportez vos heures au format ODS (LibreOffice Calc)</p>
+                        <button id="btn-export-all" class="btn-primary">
+                            <svg viewBox="0 0 24 24" width="24" height="24">
+                                <path fill="currentColor" d="M19 9h-4V3H9v6H5l7 7 7-7zM5 18v2h14v-2H5z"/>
+                            </svg>
+                            Exporter toutes les données
+                        </button>
+                    </div>
+                    <div class="settings-section">
+                        <h3>Import des données</h3>
+                        <p class="settings-description">Importez un fichier ODS précédemment exporté</p>
+                        <label class="btn-primary btn-file">
+                            <svg viewBox="0 0 24 24" width="24" height="24">
+                                <path fill="currentColor" d="M9 16h6v-6h4l-7-7-7 7h4zm-4 2h14v2H5z"/>
+                            </svg>
+                            Importer un fichier ODS
+                            <input type="file" id="input-import" accept=".ods" hidden>
+                        </label>
+                    </div>
+
+<!-- Bilan global du temps de travail -->
+<div class="settings-section bilan-global-section">
+    <h3>📊 Bilan global du temps de travail</h3>
+
+    <div class="bilan-details-toggle" onclick="toggleBilanDetails()">
+        <span>Détail par emploi</span>
+        <span class="bilan-toggle-icon">▶</span>
+    </div>
+
+    <div class="bilan-emplois-list collapsed" id="bilan-emplois-list">
+        <!-- Liste des cumuls par emploi générée dynamiquement -->
+    </div>
+
+    <div class="bilan-total-card">
+        <div class="bilan-total-label">Total tous emplois confondus</div>
+        <div class="bilan-total-heures" id="bilan-total-heures">0H00</div>
+        <div class="bilan-total-duree" id="bilan-total-duree">0 année(s), 0 mois, 0 jour(s)</div>
+        <div class="bilan-info">ℹ️ Conversion en années/mois/jours basée sur un cumul d'heures, et non sur des dates réelles.</div>
+    </div>
+</div>
+
+                    <div class="settings-section about">
+                        <h3>À propos</h3>
+                        <div class="about-info">
+                            <img src="icon192x192.png" alt="MesZeuR" class="about-logo">
+                            <p class="app-name">MesZeuR</p>
+                            <p class="version">Version 1.0.0</p>
+                            <p class="copyright">© 2026 LEROY Aurélien</p>
+                            <p class="rights">Tous droits réservés</p>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+
+        <!-- Modal de confirmation -->
+        <div id="modal-confirm" class="modal hidden">
+            <div class="modal-content">
+                <h3 id="modal-title">Confirmation</h3>
+                <p id="modal-message"></p>
+                <div class="modal-actions">
+                    <button id="modal-cancel" class="btn-secondary">Annuler</button>
+                    <button id="modal-confirm-btn" class="btn-danger">Supprimer</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Toast notifications -->
+        <div id="toast" class="toast hidden"></div>
+    </div>
+
+    <script src="app.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+</body>
+</html>
