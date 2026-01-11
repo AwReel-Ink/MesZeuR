@@ -1,15 +1,16 @@
 // MesZeuR Service Worker
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const CACHE_NAME = 'meszeur-v1.3.2';
+const CACHE_NAME = 'meszeur-v1.3.3';
+const BASE_PATH = '/MesZeuR';
 const ASSETS_TO_CACHE = [
-    '/',
-    '/index.html',
-    '/style.css',
-    '/app.js',
-    '/manifest.json',
-    '/icon192x192.png',
-    '/icon512x512.png'
+    `${BASE_PATH}/`,
+    `${BASE_PATH}/index.html`,
+    `${BASE_PATH}/style.css`,
+    `${BASE_PATH}/app.js`,
+    `${BASE_PATH}/manifest.json`,
+    `${BASE_PATH}/icon192x192.png`,
+    `${BASE_PATH}/icon512x512.png`
 ];
 
 // Install event - cache assets
@@ -53,19 +54,15 @@ self.addEventListener('fetch', (event) => {
         caches.match(event.request)
             .then((cachedResponse) => {
                 if (cachedResponse) {
-                    // Return cached version
                     return cachedResponse;
                 }
 
-                // Fetch from network
                 return fetch(event.request)
                     .then((networkResponse) => {
-                        // Don't cache non-successful responses
                         if (!networkResponse || networkResponse.status !== 200 || networkResponse.type !== 'basic') {
                             return networkResponse;
                         }
 
-                        // Clone and cache the response
                         const responseToCache = networkResponse.clone();
                         caches.open(CACHE_NAME)
                             .then((cache) => {
@@ -75,9 +72,8 @@ self.addEventListener('fetch', (event) => {
                         return networkResponse;
                     })
                     .catch(() => {
-                        // Offline fallback for HTML pages
-                        if (event.request.headers.get('accept').includes('text/html')) {
-                            return caches.match('/index.html');
+                        if (event.request.headers.get('accept')?.includes('text/html')) {
+                            return caches.match(`${BASE_PATH}/index.html`);
                         }
                     });
             })
