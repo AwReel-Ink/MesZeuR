@@ -1,8 +1,8 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
-// Version 1.3.5
+// Version 1.3.6
 
-const APP_VERSION = '1.3.5';
+const APP_VERSION = '1.3.6';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
 
@@ -465,7 +465,8 @@ async function saveEmploi(event) {
     // 🔧 CORRECTION : Récupérer l'emploi existant pour conserver heuresManuelles
     let emploiExistant = {};
     if (id) {
-        emploiExistant = await getFromStore('emplois', id) || {};
+        const allEmplois = await getAllFromStore('emplois');
+        emploiExistant = allEmplois.find(e => e.id === id) || {};
     }
 
     const emploi = {
