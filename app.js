@@ -1,8 +1,8 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
-// Version 1.4.1
+// Version 1.4.2
 
-const APP_VERSION = '1.4.1';
+const APP_VERSION = '1.4.2';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
 
@@ -87,6 +87,8 @@ const elements = {
     tempsReelTrajet: document.getElementById('temps-reel-trajet'),
     btnSaveHeures: document.getElementById('btn-save-heures'),
     cumulTotalEmploi: document.getElementById('cumul-total-emploi'),
+    emploiPauseHeures: document.getElementById('emploi-pause-heures'),
+    emploiPauseMinutes: document.getElementById('emploi-pause-minutes'),
     
     // Settings
     btnExportAll: document.getElementById('btn-export-all'),
@@ -109,10 +111,10 @@ const elements = {
     weekPickerOk: document.getElementById('week-picker-ok'),
 
     // Heures manuelles
-heuresManuellesCheck: document.getElementById('heures-manuelles-check'),
-heuresManuellesInput: document.getElementById('heures-manuelles-input'),
-heuresManuellesValue: document.getElementById('heures-manuelles-value'),
-btnSaveHeuresManuelles: document.getElementById('btn-save-heures-manuelles'),
+    heuresManuellesCheck: document.getElementById('heures-manuelles-check'),
+    heuresManuellesInput: document.getElementById('heures-manuelles-input'),
+    heuresManuellesValue: document.getElementById('heures-manuelles-value'),
+    btnSaveHeuresManuelles: document.getElementById('btn-save-heures-manuelles'),
 
 };
 
@@ -439,11 +441,21 @@ function openFormEmploi(emploi = null) {
     elements.emploiEntrepriseId.value = currentEntreprise.id;
     elements.emploiPoste.value = emploi ? emploi.poste : '';
     elements.emploiDateDebut.value = emploi ? emploi.dateDebut : '';
-    elements.emploiCdi.checked = emploi ? !emploi.cdi : true; // Inversé car le slider va de CDI à Temps déterminé
+    elements.emploiCdi.checked = emploi ? !emploi.cdi : true;
     elements.emploiDateFin.value = emploi ? (emploi.dateFin || '') : '';
     elements.emploiTrajet.value = emploi ? (emploi.trajet || 0) : 0;
     elements.emploiPauseRemuneree.checked = emploi ? emploi.pauseRemuneree : false;
-    
+
+    // Pause par défaut
+    if (emploi && emploi.pauseDefaut) {
+        const [h, m] = emploi.pauseDefaut.split(':');
+        elements.emploiPauseHeures.value = parseInt(h) || 0;
+        elements.emploiPauseMinutes.value = parseInt(m) || 30;
+    } else {
+        elements.emploiPauseHeures.value = 0;
+        elements.emploiPauseMinutes.value = 30;
+    }
+
     updateDateFinVisibility();
     showPage('page-form-emploi', emploi ? 'Modifier' : 'Nouvel Emploi');
 }
@@ -462,15 +474,20 @@ async function saveEmploi(event) {
     const isCDD = elements.emploiCdi.checked;
     const id = elements.emploiId.value ? parseInt(elements.emploiId.value) : null;
 
-    // 🔧 CORRECTION : Récupérer l'emploi existant pour conserver heuresManuelles
+    // Récupérer l'emploi existant pour conserver heuresManuelles
     let emploiExistant = {};
     if (id) {
         const allEmplois = await getAllFromStore('emplois');
         emploiExistant = allEmplois.find(e => e.id === id) || {};
     }
 
+    // Calculer pause par défaut
+    const pauseHeures = parseInt(elements.emploiPauseHeures.value) || 0;
+    const pauseMinutes = parseInt(elements.emploiPauseMinutes.value) || 30;
+    const pauseDefaut = `${pauseHeures.toString().padStart(2, '0')}:${pauseMinutes.toString().padStart(2, '0')}`;
+
     const emploi = {
-        ...emploiExistant,  // ← Conserve heuresManuelles et autres données
+        ...emploiExistant,
         entrepriseId: parseInt(elements.emploiEntrepriseId.value),
         poste: elements.emploiPoste.value.trim(),
         dateDebut: elements.emploiDateDebut.value,
@@ -478,6 +495,7 @@ async function saveEmploi(event) {
         dateFin: isCDD ? elements.emploiDateFin.value : null,
         trajet: parseInt(elements.emploiTrajet.value) || 0,
         pauseRemuneree: elements.emploiPauseRemuneree.checked,
+        pauseDefaut,  // NOUVEAU
         lastModified: new Date().toISOString()
     };
 
@@ -491,7 +509,6 @@ async function saveEmploi(event) {
             showToast('Emploi ajouté', 'success');
         }
 
-        // Update entreprise lastActivity
         currentEntreprise.lastActivity = new Date().toISOString();
         await updateInStore('entreprises', currentEntreprise);
 
@@ -647,7 +664,8 @@ async function renderWeekTable() {
         
         // Pause input
         const tdPause = document.createElement('td');
-        tdPause.innerHTML = `<input type="time" class="input-pause" data-date="${dateStr}" value="${existingHeure.pause || '00:30'}">`;
+        const defaultPause = currentEmploi.pauseDefaut || '00:30';
+        tdPause.innerHTML = `<input type="time" class="input-pause" data-date="${dateStr}" value="${existingHeure.pause || defaultPause}">`;
         elements.rowPause.appendChild(tdPause);
         
         // Début input
