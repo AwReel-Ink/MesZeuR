@@ -1,103 +1,54 @@
 // MesZeuR Service Worker
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const CACHE_NAME = 'meszeur-v1.4.2';
-const BASE_PATH = '/MesZeuR';
-const ASSETS_TO_CACHE = [
-    `${BASE_PATH}/`,
-    `${BASE_PATH}/index.html`,
-    `${BASE_PATH}/style.css`,
-    `${BASE_PATH}/app.js`,
-    `${BASE_PATH}/manifest.json`,
-    `${BASE_PATH}/icon192x192.png`,
-    `${BASE_PATH}/icon512x512.png`
-];
+// La version vient de l'URL d'enregistrement (sw.js?v=1.4.0), définie une seule fois dans app.js.
+const VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
+const CACHE_NAME = `meszeur-${VERSION}`;
+const BASE = self.registration.scope;   // fonctionne en sous-dossier GitHub Pages comme en local
+const ASSETS = ['', 'index.html', 'style.css', 'app.js', 'jszip.min.js', 'manifest.json', 'icon192x192.png', 'icon512x512.png']
+    .map(p => new URL(p, BASE).href);
 
-// Install event - cache assets
-self.addEventListener('install', (event) => {
+self.addEventListener('install', event => {
     event.waitUntil(
         caches.open(CACHE_NAME)
-            .then((cache) => {
-                console.log('Caching app assets');
-                return cache.addAll(ASSETS_TO_CACHE);
-            })
+            // un fichier manquant n'empêche pas l'installation des autres
+            .then(cache => Promise.allSettled(ASSETS.map(url => cache.add(url))))
             .then(() => self.skipWaiting())
     );
 });
 
-// Activate event - clean old caches
-self.addEventListener('activate', (event) => {
+self.addEventListener('activate', event => {
     event.waitUntil(
         caches.keys()
-            .then((cacheNames) => {
-                return Promise.all(
-                    cacheNames
-                        .filter((name) => name !== CACHE_NAME)
-                        .map((name) => {
-                            console.log('Deleting old cache:', name);
-                            return caches.delete(name);
-                        })
-                );
-            })
+            .then(names => Promise.all(
+                names.filter(n => n.startsWith('meszeur-') && n !== CACHE_NAME).map(n => caches.delete(n))
+            ))
             .then(() => self.clients.claim())
     );
 });
 
-// Fetch event - serve from cache, fallback to network
-self.addEventListener('fetch', (event) => {
-    const url = new URL(event.request.url);
-    
-    // Ignorer les requêtes non-GET
-    if (event.request.method !== 'GET') {
-        return;
-    }
-    
-    // Ignorer les extensions Chrome et autres protocoles non-http(s)
-    if (!url.protocol.startsWith('http')) {
-        return;
-    }
-    
-    // Ignorer les requêtes vers d'autres domaines
-    if (url.origin !== location.origin) {
-        return;
-    }
+self.addEventListener('fetch', event => {
+    const req = event.request;
+    const url = new URL(req.url);
+    if (req.method !== 'GET' || !url.protocol.startsWith('http') || url.origin !== location.origin) return;
 
     event.respondWith(
-        caches.match(event.request)
-            .then((cachedResponse) => {
-                if (cachedResponse) {
-                    return cachedResponse;
-                }
-
-                return fetch(event.request)
-                    .then((networkResponse) => {
-                        if (!networkResponse || networkResponse.status !== 200) {
-                            return networkResponse;
-                        }
-                        
-                        // Ne cacher que les ressources de notre app
-                        if (url.pathname.startsWith(BASE_PATH)) {
-                            const responseToCache = networkResponse.clone();
-                            caches.open(CACHE_NAME)
-                                .then((cache) => {
-                                    cache.put(event.request, responseToCache);
-                                });
-                        }
-
-                        return networkResponse;
-                    })
-                    .catch(() => {
-                        if (event.request.headers.get('accept')?.includes('text/html')) {
-                            return caches.match(`${BASE_PATH}/index.html`);
-                        }
-                    });
-            })
+        // ignoreSearch : "index.html?action=travail" retrouve la page en cache
+        caches.match(req, { ignoreSearch: true }).then(cached => {
+            if (cached) return cached;
+            return fetch(req)
+                .then(res => {
+                    if (res && res.status === 200 && res.type === 'basic') {
+                        const copy = res.clone();
+                        caches.open(CACHE_NAME).then(cache => cache.put(req, copy));
+                    }
+                    return res;
+                })
+                .catch(() => (req.mode === 'navigate' ? caches.match(new URL('index.html', BASE).href) : undefined));
+        })
     );
 });
 
-// Handle messages from the main app
-self.addEventListener('message', (event) => {
-    if (event.data && event.data.type === 'SKIP_WAITING') {
-        self.skipWaiting();
-    }
+self.addEventListener('message', event => {
+    if (event.data && event.data.type === 'SKIP_WAITING') self.skipWaiting();
 });

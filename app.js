@@ -1,312 +1,301 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
-// Version 1.4.2
 
-const APP_VERSION = '1.4.2';
+const APP_VERSION = '1.5.0';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 1;
+const DEFAULT_PAUSE = '00:30';
 
-// ===== State Management =====
+const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
+const JOURS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
+const JOURS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
+
+const NS = {
+    office: 'urn:oasis:names:tc:opendocument:xmlns:office:1.0',
+    table: 'urn:oasis:names:tc:opendocument:xmlns:table:1.0',
+    text: 'urn:oasis:names:tc:opendocument:xmlns:text:1.0'
+};
+
+// ===== État =====
 let db = null;
 let currentEntreprise = null;
 let currentEmploi = null;
 let currentWeekStart = null;
+let currentMonthKey = null;       // mois visé par la saisie manuelle (AAAA-MM)
+let heuresCache = new Map();      // date -> enregistrement, pour l'emploi courant
+let renderToken = 0;
+let modalConfirmCallback = null;
+let modalCancelCallback = null;
+let toastTimeout = null;
 
-// ===== DOM Elements =====
-const elements = {
-    // Header
-    btnBack: document.getElementById('btn-back'),
-    btnSettings: document.getElementById('btn-settings'),
-    pageTitle: document.getElementById('page-title'),
-    
-    // Pages
-    pageHome: document.getElementById('page-home'),
-    pageEntreprises: document.getElementById('page-entreprises'),
-    pageFormEntreprise: document.getElementById('page-form-entreprise'),
-    pageEmplois: document.getElementById('page-emplois'),
-    pageFormEmploi: document.getElementById('page-form-emploi'),
-    pageHeures: document.getElementById('page-heures'),
-    pageSettings: document.getElementById('page-settings'),
-    
-    // Home
-    btnTravail: document.getElementById('btn-travail'),
-    
-    // Entreprises
-    btnAddEntreprise: document.getElementById('btn-add-entreprise'),
-    listeEntreprises: document.getElementById('liste-entreprises'),
-    
-    // Form Entreprise
-    formEntreprise: document.getElementById('form-entreprise'),
-    formEntrepriseTitle: document.getElementById('form-entreprise-title'),
-    entrepriseId: document.getElementById('entreprise-id'),
-    entrepriseNom: document.getElementById('entreprise-nom'),
-    entrepriseAdresse: document.getElementById('entreprise-adresse'),
-    btnCancelEntreprise: document.getElementById('btn-cancel-entreprise'),
-    
-    // Emplois
-    emploisEntrepriseNom: document.getElementById('emplois-entreprise-nom'),
-    emploisEntrepriseAdresse: document.getElementById('emplois-entreprise-adresse'),
-    btnEditEntreprise: document.getElementById('btn-edit-entreprise'),
-    btnDeleteEntreprise: document.getElementById('btn-delete-entreprise'),
-    btnAddEmploi: document.getElementById('btn-add-emploi'),
-    listeEmplois: document.getElementById('liste-emplois'),
-    
-    // Form Emploi
-    formEmploi: document.getElementById('form-emploi'),
-    formEmploiTitle: document.getElementById('form-emploi-title'),
-    emploiId: document.getElementById('emploi-id'),
-    emploiEntrepriseId: document.getElementById('emploi-entreprise-id'),
-    emploiPoste: document.getElementById('emploi-poste'),
-    emploiDateDebut: document.getElementById('emploi-date-debut'),
-    emploiCdi: document.getElementById('emploi-cdi'),
-    emploiDateFin: document.getElementById('emploi-date-fin'),
-    groupDateFin: document.getElementById('group-date-fin'),
-    emploiTrajet: document.getElementById('emploi-trajet'),
-    emploiPauseRemuneree: document.getElementById('emploi-pause-remuneree'),
-    btnCancelEmploi: document.getElementById('btn-cancel-emploi'),
-    
-    // Heures
-    heuresEmploiPoste: document.getElementById('heures-emploi-poste'),
-    heuresEmploiContrat: document.getElementById('heures-emploi-contrat'),
-    btnEditEmploi: document.getElementById('btn-edit-emploi'),
-    btnDeleteEmploi: document.getElementById('btn-delete-emploi'),
-    btnPrevWeek: document.getElementById('btn-prev-week'),
-    btnNextWeek: document.getElementById('btn-next-week'),
-    weekLabel: document.getElementById('week-label'),
-    rowDates: document.getElementById('row-dates'),
-    rowRepos: document.getElementById('row-repos'),
-    rowJours: document.getElementById('row-jours'),
-    rowPause: document.getElementById('row-pause'),
-    rowDebut: document.getElementById('row-debut'),
-    rowFin: document.getElementById('row-fin'),
-    rowTotalJour: document.getElementById('row-total-jour'),
-    totalSemaine: document.getElementById('total-semaine'),
-    totalMois: document.getElementById('total-mois'),
-    totalAnnee: document.getElementById('total-annee'),
-    tempsReel: document.getElementById('temps-reel'),
-    tempsReelTrajet: document.getElementById('temps-reel-trajet'),
-    btnSaveHeures: document.getElementById('btn-save-heures'),
-    cumulTotalEmploi: document.getElementById('cumul-total-emploi'),
-    emploiPauseHeures: document.getElementById('emploi-pause-heures'),
-    emploiPauseMinutes: document.getElementById('emploi-pause-minutes'),
-    
-    // Settings
-    btnExportAll: document.getElementById('btn-export-all'),
-    inputImport: document.getElementById('input-import'),
-    
-    // Modal
-    modal: document.getElementById('modal-confirm'),
-    modalTitle: document.getElementById('modal-title'),
-    modalMessage: document.getElementById('modal-message'),
-    modalCancel: document.getElementById('modal-cancel'),
-    modalConfirmBtn: document.getElementById('modal-confirm-btn'),
-    
-    // Toast
-    toast: document.getElementById('toast'),
+// ===== Éléments du DOM (id "mon-id" -> elements.monId) =====
+const elements = {};
+[
+    'btn-back', 'btn-settings', 'page-title',
+    'page-home', 'page-entreprises', 'page-form-entreprise', 'page-emplois', 'page-form-emploi', 'page-heures', 'page-settings',
+    'btn-travail',
+    'btn-add-entreprise', 'liste-entreprises',
+    'form-entreprise', 'form-entreprise-title', 'entreprise-id', 'entreprise-nom', 'entreprise-adresse', 'btn-cancel-entreprise',
+    'emplois-entreprise-nom', 'emplois-entreprise-adresse', 'btn-edit-entreprise', 'btn-delete-entreprise', 'btn-add-emploi', 'liste-emplois',
+    'form-emploi', 'form-emploi-title', 'emploi-id', 'emploi-entreprise-id', 'emploi-poste', 'emploi-date-debut', 'emploi-cdd',
+    'group-date-fin', 'emploi-date-fin', 'emploi-trajet', 'emploi-pause-remuneree', 'emploi-pause-heures', 'emploi-pause-minutes', 'btn-cancel-emploi',
+    'heures-emploi-poste', 'heures-emploi-contrat', 'btn-edit-emploi', 'btn-delete-emploi',
+    'btn-prev-week', 'btn-next-week', 'week-label', 'week-picker-modal', 'week-date-picker', 'week-picker-ok',
+    'heures-table', 'row-dates', 'row-repos', 'row-jours', 'row-pause', 'row-debut', 'row-fin', 'row-total-jour', 'total-semaine',
+    'heures-manuelles-check', 'heures-manuelles-input', 'heures-manuelles-mois-label', 'heures-manuelles-mois-select',
+    'heures-manuelles-value', 'btn-save-heures-manuelles',
+    'total-mois', 'total-annee', 'temps-reel', 'temps-reel-trajet', 'cumul-total-emploi', 'btn-save-heures',
+    'btn-export-all', 'input-import', 'bilan-toggle', 'bilan-emplois-list', 'bilan-total-heures', 'bilan-total-duree', 'app-version',
+    'modal-confirm', 'modal-title', 'modal-message', 'modal-cancel', 'modal-confirm-btn', 'toast'
+].forEach(id => {
+    elements[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = document.getElementById(id);
+});
 
-    // Week picker 
-    weekLabelInput: document.getElementById('week-label'),
-    weekPickerModal: document.getElementById('week-picker-modal'),
-    weekDatePicker: document.getElementById('week-date-picker'),
-    weekPickerOk: document.getElementById('week-picker-ok'),
+// ===== Utilitaires dates / temps =====
+const pad = n => String(n).padStart(2, '0');
 
-    // Heures manuelles
-    heuresManuellesCheck: document.getElementById('heures-manuelles-check'),
-    heuresManuellesInput: document.getElementById('heures-manuelles-input'),
-    heuresManuellesValue: document.getElementById('heures-manuelles-value'),
-    btnSaveHeuresManuelles: document.getElementById('btn-save-heures-manuelles'),
+function parseISO(s) {
+    const [y, m, d] = s.split('-').map(Number);
+    return new Date(y, m - 1, d);
+}
+function formatDateISO(date) {
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`;
+}
+function formatDate(iso) {
+    if (!iso) return '';
+    const [y, m, d] = iso.split('-');
+    return `${d}/${m}/${y}`;
+}
+function formatDateFull(date) { return formatDate(formatDateISO(date)); }
+function formatDateShort(date) { return `${pad(date.getDate())}/${pad(date.getMonth() + 1)}`; }
+function todayISO() { return formatDateISO(new Date()); }
+function monthKeyOf(date) { return `${date.getFullYear()}-${pad(date.getMonth() + 1)}`; }
+function monthLabel(key) {
+    const [y, m] = key.split('-');
+    return `${MOIS[Number(m) - 1]} ${y}`;
+}
+function addDays(date, days) {
+    const r = new Date(date);
+    r.setDate(r.getDate() + days);
+    return r;
+}
+function getMonday(date) {
+    const d = new Date(date);
+    d.setHours(0, 0, 0, 0);
+    const day = d.getDay();
+    d.setDate(d.getDate() + (day === 0 ? -6 : 1 - day));
+    return d;
+}
+function timeToMinutes(str) {
+    if (!str) return 0;
+    const [h, m] = str.split(':').map(Number);
+    return (h || 0) * 60 + (m || 0);
+}
+function minutesToTime(min) {
+    min = Math.max(0, Math.round(min));
+    return `${Math.floor(min / 60)}H${pad(min % 60)}`;
+}
+function decimalHoursToMinutes(h) {
+    const v = parseFloat(h);
+    return isNaN(v) ? 0 : Math.round(v * 60);
+}
+function parseDecimal(str) {
+    return parseFloat(String(str).replace(',', '.').replace(/[^\d.\-]/g, ''));
+}
+function round2(n) { return Math.round(n * 100) / 100; }
 
-};
+// ===== Calcul d'une journée =====
+// Durée brute entre début et fin (une fin avant le début = travail de nuit, fin le lendemain).
+function grossMinutes(h) {
+    if (!h || h.repos || !h.debut || !h.fin) return 0;
+    const d = timeToMinutes(h.debut);
+    let f = timeToMinutes(h.fin);
+    if (f < d) f += 1440;
+    return f - d;
+}
+// Durée comptée : on retire la pause sauf si elle est rémunérée.
+function netMinutes(h, emploi) {
+    const g = grossMinutes(h);
+    if (g <= 0) return 0;
+    return emploi.pauseRemuneree ? g : Math.max(0, g - timeToMinutes(h.pause));
+}
+// Minutes par mois (AAAA-MM) : un mois en saisie manuelle ignore les jours détaillés.
+function computePerMonth(emploi, heuresMap, overrides, lockedSet) {
+    const manual = emploi.heuresManuelles || {};
+    const locked = lockedSet || new Set(Object.keys(manual));
+    const per = {};
+    Object.entries(manual).forEach(([k, v]) => { per[k] = decimalHoursToMinutes(v); });
+    const add = rec => {
+        const mk = rec.date.slice(0, 7);
+        if (locked.has(mk)) return;
+        per[mk] = (per[mk] || 0) + netMinutes(rec, emploi);
+    };
+    heuresMap.forEach((rec, date) => { if (!overrides || !overrides[date]) add(rec); });
+    if (overrides) Object.values(overrides).forEach(add);
+    return per;
+}
 
-// ===== IndexedDB Setup =====
-async function initDB() {
+// ===== IndexedDB =====
+function initDB() {
     return new Promise((resolve, reject) => {
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-        
         request.onerror = () => reject(request.error);
-        request.onsuccess = () => {
-            db = request.result;
-            resolve(db);
-        };
-        
+        request.onsuccess = () => { db = request.result; resolve(db); };
         request.onupgradeneeded = (event) => {
             const database = event.target.result;
-            
-            // Store Entreprises
             if (!database.objectStoreNames.contains('entreprises')) {
-                const entreprisesStore = database.createObjectStore('entreprises', { keyPath: 'id', autoIncrement: true });
-                entreprisesStore.createIndex('nom', 'nom', { unique: false });
-                entreprisesStore.createIndex('lastActivity', 'lastActivity', { unique: false });
+                const s = database.createObjectStore('entreprises', { keyPath: 'id', autoIncrement: true });
+                s.createIndex('nom', 'nom', { unique: false });
+                s.createIndex('lastActivity', 'lastActivity', { unique: false });
             }
-            
-            // Store Emplois
             if (!database.objectStoreNames.contains('emplois')) {
-                const emploisStore = database.createObjectStore('emplois', { keyPath: 'id', autoIncrement: true });
-                emploisStore.createIndex('entrepriseId', 'entrepriseId', { unique: false });
-                emploisStore.createIndex('lastModified', 'lastModified', { unique: false });
+                const s = database.createObjectStore('emplois', { keyPath: 'id', autoIncrement: true });
+                s.createIndex('entrepriseId', 'entrepriseId', { unique: false });
+                s.createIndex('lastModified', 'lastModified', { unique: false });
             }
-            
-            // Store Heures
             if (!database.objectStoreNames.contains('heures')) {
-                const heuresStore = database.createObjectStore('heures', { keyPath: 'id', autoIncrement: true });
-                heuresStore.createIndex('emploiId', 'emploiId', { unique: false });
-                heuresStore.createIndex('date', 'date', { unique: false });
-                heuresStore.createIndex('emploiId_date', ['emploiId', 'date'], { unique: true });
+                const s = database.createObjectStore('heures', { keyPath: 'id', autoIncrement: true });
+                s.createIndex('emploiId', 'emploiId', { unique: false });
+                s.createIndex('date', 'date', { unique: false });
+                s.createIndex('emploiId_date', ['emploiId', 'date'], { unique: true });
             }
         };
     });
 }
 
-// ===== Database Operations =====
-async function dbOperation(storeName, mode, operation) {
+// La promesse se résout quand la transaction est réellement terminée (donnée écrite).
+function dbRun(storeName, mode, fn) {
     return new Promise((resolve, reject) => {
-        const transaction = db.transaction(storeName, mode);
-        const store = transaction.objectStore(storeName);
-        const request = operation(store);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
+        const tx = db.transaction(storeName, mode);
+        const req = fn(tx.objectStore(storeName));
+        tx.oncomplete = () => resolve(req.result);
+        tx.onerror = () => reject(tx.error || req.error);
+        tx.onabort = () => reject(tx.error || req.error);
+    });
+}
+const getAllFromStore = s => dbRun(s, 'readonly', st => st.getAll());
+const getByKey = (s, k) => dbRun(s, 'readonly', st => st.get(k));
+const addToStore = (s, d) => dbRun(s, 'readwrite', st => st.add(d));
+const updateInStore = (s, d) => dbRun(s, 'readwrite', st => st.put(d));
+const deleteFromStore = (s, k) => dbRun(s, 'readwrite', st => st.delete(k));
+const getByIndex = (s, idx, v) => dbRun(s, 'readonly', st => st.index(idx).getAll(v));
+
+function bulkPut(storeName, items) {
+    return new Promise((resolve, reject) => {
+        const tx = db.transaction(storeName, 'readwrite');
+        const st = tx.objectStore(storeName);
+        items.forEach(i => st.put(i));
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
     });
 }
 
-async function getAllFromStore(storeName) {
-    return dbOperation(storeName, 'readonly', store => store.getAll());
-}
-
-async function getByKey(storeName, key) {
-    return dbOperation(storeName, 'readonly', store => store.get(key));
-}
-
-async function addToStore(storeName, data) {
-    return dbOperation(storeName, 'readwrite', store => store.add(data));
-}
-
-async function updateInStore(storeName, data) {
-    return dbOperation(storeName, 'readwrite', store => store.put(data));
-}
-
-async function deleteFromStore(storeName, key) {
-    return dbOperation(storeName, 'readwrite', store => store.delete(key));
-}
-
-async function getByIndex(storeName, indexName, value) {
-    return new Promise((resolve, reject) => {
-        const transaction = db.transaction(storeName, 'readonly');
-        const store = transaction.objectStore(storeName);
-        const index = store.index(indexName);
-        const request = index.getAll(value);
-        
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error);
-    });
+async function touchActivity() {
+    const now = new Date().toISOString();
+    if (currentEmploi) {
+        currentEmploi.lastModified = now;
+        await updateInStore('emplois', currentEmploi);
+    }
+    if (currentEntreprise) {
+        currentEntreprise.lastActivity = now;
+        await updateInStore('entreprises', currentEntreprise);
+    }
 }
 
 // ===== Navigation =====
 function showPage(pageId, title = 'MesZeuR') {
-    document.querySelectorAll('.page').forEach(page => page.classList.remove('active'));
+    document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(pageId).classList.add('active');
     elements.pageTitle.textContent = title;
-    
-    // Show/hide back button
-    const showBack = pageId !== 'page-home';
-    elements.btnBack.classList.toggle('hidden', !showBack);
+    elements.btnBack.classList.toggle('hidden', pageId === 'page-home');
     elements.btnSettings.classList.toggle('hidden', pageId === 'page-settings');
+    window.scrollTo(0, 0);
+}
+
+function goToEntreprises() {
+    showPage('page-entreprises', 'Mes Entreprises');
+    return loadEntreprises();
+}
+function goToEmplois() {
+    showPage('page-emplois', currentEntreprise.nom);
+    return loadEmplois(currentEntreprise.id);
 }
 
 function navigateBack() {
-    const activePage = document.querySelector('.page.active').id;
-    
-    switch (activePage) {
-        case 'page-entreprises':
-            showPage('page-home');
-            break;
+    const active = document.querySelector('.page.active').id;
+    switch (active) {
         case 'page-form-entreprise':
-            showPage('page-entreprises', 'Mes Entreprises');
-            loadEntreprises();
-            break;
-        case 'page-emplois':
-            showPage('page-entreprises', 'Mes Entreprises');
-            loadEntreprises();
-            break;
+        case 'page-emplois': goToEntreprises(); break;
         case 'page-form-emploi':
-            showPage('page-emplois', currentEntreprise.nom);
-            loadEmplois(currentEntreprise.id);
-            break;
-        case 'page-heures':
-            showPage('page-emplois', currentEntreprise.nom);
-            loadEmplois(currentEntreprise.id);
-            break;
-        case 'page-settings':
-            showPage('page-home');
-            break;
-        default:
-            showPage('page-home');
+        case 'page-heures': goToEmplois(); break;
+        default: showPage('page-home');
     }
+}
+
+// ===== Rendu de listes =====
+const ARROW_SVG = '<svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>';
+
+function addListItem(container, { title, subtitle, badge, badgeClass, onClick }) {
+    const item = document.createElement('div');
+    item.className = 'list-item';
+    item.tabIndex = 0;
+    item.setAttribute('role', 'button');
+    item.innerHTML = `
+        <div class="list-item-content">
+            <div class="list-item-title">${escapeHtml(title)}</div>
+            <div class="list-item-subtitle">${escapeHtml(subtitle)}</div>
+        </div>
+        <span class="list-item-badge ${badgeClass}">${escapeHtml(badge)}</span>
+        <span class="list-item-arrow">${ARROW_SVG}</span>`;
+    item.addEventListener('click', onClick);
+    item.addEventListener('keydown', e => { if (e.key === 'Enter') onClick(); });
+    container.appendChild(item);
+}
+
+function renderEmptyState(container, line1, line2) {
+    container.innerHTML = `
+        <div class="empty-state">
+            <svg viewBox="0 0 24 24"><path fill="currentColor" d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/></svg>
+            <p>${line1}</p><p>${line2}</p>
+        </div>`;
 }
 
 // ===== Entreprises =====
+// Tri : CDI en premier, puis fin de contrat la plus récente (le travail en cours est donc toujours en haut).
 async function loadEntreprises() {
-    const entreprises = await getAllFromStore('entreprises');
-    
-    // Sort by lastActivity (most recent first)
-    entreprises.sort((a, b) => {
-        const dateA = a.lastActivity ? new Date(a.lastActivity) : new Date(0);
-        const dateB = b.lastActivity ? new Date(b.lastActivity) : new Date(0);
-        return dateB - dateA;
+    const [entreprises, emploisAll] = await Promise.all([getAllFromStore('entreprises'), getAllFromStore('emplois')]);
+    const today = todayISO();
+
+    const rows = entreprises.map(e => {
+        const emps = emploisAll.filter(x => x.entrepriseId === e.id);
+        const hasCdi = emps.some(x => x.cdi);
+        const lastEnd = emps.reduce((m, x) => (x.dateFin && x.dateFin > m ? x.dateFin : m), '');
+        return { e, hasCdi, lastEnd, active: hasCdi || (lastEnd !== '' && lastEnd >= today) };
     });
-    
+    rows.sort((a, b) =>
+        (Number(b.hasCdi) - Number(a.hasCdi)) ||
+        b.lastEnd.localeCompare(a.lastEnd) ||
+        (b.e.lastActivity || '').localeCompare(a.e.lastActivity || ''));
+
     elements.listeEntreprises.innerHTML = '';
-    
-    if (entreprises.length === 0) {
-        elements.listeEntreprises.innerHTML = `
-            <div class="empty-state">
-                <svg viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M12 7V3H2v18h20V7H12zM6 19H4v-2h2v2zm0-4H4v-2h2v2zm0-4H4V9h2v2zm0-4H4V5h2v2zm4 12H8v-2h2v2zm0-4H8v-2h2v2zm0-4H8V9h2v2zm0-4H8V5h2v2zm10 12h-8v-2h2v-2h-2v-2h2v-2h-2V9h8v10zm-2-8h-2v2h2v-2zm0 4h-2v2h2v-2z"/>
-                </svg>
-                <p>Aucune entreprise enregistrée</p>
-                <p>Cliquez sur + pour ajouter une entreprise</p>
-            </div>
-        `;
+    if (!rows.length) {
+        renderEmptyState(elements.listeEntreprises, 'Aucune entreprise enregistrée', 'Cliquez sur + pour ajouter une entreprise');
         return;
     }
-    
-    for (const entreprise of entreprises) {
-        const emplois = await getByIndex('emplois', 'entrepriseId', entreprise.id);
-        const hasActiveCDI = emplois.some(e => e.cdi);
-        const hasActiveContract = emplois.some(e => e.cdi || (e.dateFin && new Date(e.dateFin) >= new Date()));
-        
-        let badgeClass = 'termine';
-        let badgeText = 'Terminé';
-        
-        if (hasActiveCDI) {
-            badgeClass = 'cdi';
-            badgeText = 'CDI';
-        } else if (hasActiveContract) {
-            badgeClass = '';
-            badgeText = 'En cours';
-        }
-        
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        item.innerHTML = `
-            <div class="list-item-content">
-                <div class="list-item-title">${escapeHtml(entreprise.nom)}</div>
-                <div class="list-item-subtitle">${escapeHtml(entreprise.adresse)}</div>
-            </div>
-            <span class="list-item-badge ${badgeClass}">${badgeText}</span>
-            <span class="list-item-arrow">
-                <svg viewBox="0 0 24 24" width="24" height="24">
-                    <path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-                </svg>
-            </span>
-        `;
-        item.addEventListener('click', () => openEntreprise(entreprise));
-        elements.listeEntreprises.appendChild(item);
-    }
+    rows.forEach(({ e, hasCdi, active }) => {
+        addListItem(elements.listeEntreprises, {
+            title: e.nom,
+            subtitle: e.adresse,
+            badge: hasCdi ? 'CDI' : (active ? 'En cours' : 'Terminé'),
+            badgeClass: hasCdi ? 'cdi' : (active ? '' : 'termine'),
+            onClick: () => openEntreprise(e)
+        });
+    });
 }
 
 function openFormEntreprise(entreprise = null) {
-    elements.formEntrepriseTitle.textContent = entreprise ? 'Modifier l\'entreprise' : 'Nouvelle Entreprise';
+    elements.formEntrepriseTitle.textContent = entreprise ? "Modifier l'entreprise" : 'Nouvelle Entreprise';
     elements.entrepriseId.value = entreprise ? entreprise.id : '';
     elements.entrepriseNom.value = entreprise ? entreprise.nom : '';
     elements.entrepriseAdresse.value = entreprise ? entreprise.adresse : '';
@@ -315,59 +304,55 @@ function openFormEntreprise(entreprise = null) {
 
 async function saveEntreprise(event) {
     event.preventDefault();
-    
-    const entreprise = {
-        nom: elements.entrepriseNom.value.trim(),
-        adresse: elements.entrepriseAdresse.value.trim(),
-        lastActivity: new Date().toISOString()
-    };
-    
+    const id = elements.entrepriseId.value ? parseInt(elements.entrepriseId.value) : null;
     try {
-        if (elements.entrepriseId.value) {
-            entreprise.id = parseInt(elements.entrepriseId.value);
+        if (id) {
+            const existing = await getByKey('entreprises', id) || {};
+            const entreprise = {
+                ...existing, id,
+                nom: elements.entrepriseNom.value.trim(),
+                adresse: elements.entrepriseAdresse.value.trim()
+            };
             await updateInStore('entreprises', entreprise);
+            if (currentEntreprise && currentEntreprise.id === id) currentEntreprise = entreprise;
             showToast('Entreprise modifiée', 'success');
         } else {
-            await addToStore('entreprises', entreprise);
+            await addToStore('entreprises', {
+                nom: elements.entrepriseNom.value.trim(),
+                adresse: elements.entrepriseAdresse.value.trim(),
+                lastActivity: new Date().toISOString()
+            });
             showToast('Entreprise ajoutée', 'success');
         }
-        
-        showPage('page-entreprises', 'Mes Entreprises');
-        loadEntreprises();
+        goToEntreprises();
     } catch (error) {
-        showToast('Erreur lors de l\'enregistrement', 'error');
+        showToast("Erreur lors de l'enregistrement", 'error');
         console.error(error);
     }
 }
 
-async function openEntreprise(entreprise) {
+function openEntreprise(entreprise) {
     currentEntreprise = entreprise;
     elements.emploisEntrepriseNom.textContent = entreprise.nom;
     elements.emploisEntrepriseAdresse.textContent = entreprise.adresse;
-    showPage('page-emplois', entreprise.nom);
-    loadEmplois(entreprise.id);
+    goToEmplois();
 }
 
-async function deleteEntreprise() {
+function deleteEntreprise() {
     showModal(
-        'Supprimer l\'entreprise ?',
-        `Êtes-vous sûr de vouloir supprimer "${currentEntreprise.nom}" et tous ses emplois associés ?`,
+        "Supprimer l'entreprise ?",
+        `Êtes-vous sûr de vouloir supprimer "${currentEntreprise.nom}" et tous ses emplois et heures associés ?`,
         async () => {
             try {
-                // Delete all emplois and their heures
                 const emplois = await getByIndex('emplois', 'entrepriseId', currentEntreprise.id);
                 for (const emploi of emplois) {
                     const heures = await getByIndex('heures', 'emploiId', emploi.id);
-                    for (const heure of heures) {
-                        await deleteFromStore('heures', heure.id);
-                    }
+                    for (const h of heures) await deleteFromStore('heures', h.id);
                     await deleteFromStore('emplois', emploi.id);
                 }
-                
                 await deleteFromStore('entreprises', currentEntreprise.id);
                 showToast('Entreprise supprimée', 'success');
-                showPage('page-entreprises', 'Mes Entreprises');
-                loadEntreprises();
+                goToEntreprises();
             } catch (error) {
                 showToast('Erreur lors de la suppression', 'error');
                 console.error(error);
@@ -379,178 +364,137 @@ async function deleteEntreprise() {
 // ===== Emplois =====
 async function loadEmplois(entrepriseId) {
     const emplois = await getByIndex('emplois', 'entrepriseId', entrepriseId);
-    
-    // Sort by lastModified (most recent first)
-    emplois.sort((a, b) => {
-        const dateA = a.lastModified ? new Date(a.lastModified) : new Date(0);
-        const dateB = b.lastModified ? new Date(b.lastModified) : new Date(0);
-        return dateB - dateA;
-    });
-    
+    emplois.sort((a, b) => (b.lastModified || '').localeCompare(a.lastModified || ''));
+
     elements.listeEmplois.innerHTML = '';
-    
-    if (emplois.length === 0) {
-        elements.listeEmplois.innerHTML = `
-            <div class="empty-state">
-                <svg viewBox="0 0 24 24">
-                    <path fill="currentColor" d="M20 6h-4V4c0-1.11-.89-2-2-2h-4c-1.11 0-2 .89-2 2v2H4c-1.11 0-1.99.89-1.99 2L2 19c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V8c0-1.11-.89-2-2-2zm-6 0h-4V4h4v2z"/>
-                </svg>
-                <p>Aucun emploi enregistré</p>
-                <p>Cliquez sur + pour ajouter un emploi</p>
-            </div>
-        `;
+    if (!emplois.length) {
+        renderEmptyState(elements.listeEmplois, 'Aucun emploi enregistré', 'Cliquez sur + pour ajouter un emploi');
         return;
     }
-    
-    for (const emploi of emplois) {
-        const isActive = emploi.cdi || (emploi.dateFin && new Date(emploi.dateFin) >= new Date());
-        
-        let badgeClass = 'termine';
-        let badgeText = 'Terminé';
-        
-        if (emploi.cdi) {
-            badgeClass = 'cdi';
-            badgeText = 'CDI';
-        } else if (isActive) {
-            badgeClass = '';
-            badgeText = formatDate(emploi.dateFin);
-        }
-        
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        item.innerHTML = `
-            <div class="list-item-content">
-                <div class="list-item-title">${escapeHtml(emploi.poste)}</div>
-                <div class="list-item-subtitle">Depuis le ${formatDate(emploi.dateDebut)}</div>
-            </div>
-            <span class="list-item-badge ${badgeClass}">${badgeText}</span>
-            <span class="list-item-arrow">
-                <svg viewBox="0 0 24 24" width="24" height="24">
-                    <path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/>
-                </svg>
-            </span>
-        `;
-        item.addEventListener('click', () => openEmploi(emploi));
-        elements.listeEmplois.appendChild(item);
-    }
+    const today = todayISO();
+    emplois.forEach(emploi => {
+        const active = emploi.cdi || (emploi.dateFin && emploi.dateFin >= today);
+        addListItem(elements.listeEmplois, {
+            title: emploi.poste,
+            subtitle: emploi.cdi
+                ? `Depuis le ${formatDate(emploi.dateDebut)}`
+                : `Du ${formatDate(emploi.dateDebut)} au ${formatDate(emploi.dateFin)}`,
+            badge: emploi.cdi ? 'CDI' : (active ? formatDate(emploi.dateFin) : 'Terminé'),
+            badgeClass: emploi.cdi ? 'cdi' : (active ? '' : 'termine'),
+            onClick: () => openEmploi(emploi)
+        });
+    });
+}
+
+function updateDateFinVisibility() {
+    const isCDD = elements.emploiCdd.checked;
+    elements.groupDateFin.style.display = isCDD ? 'block' : 'none';
+    elements.emploiDateFin.required = isCDD;
+    if (!isCDD) elements.emploiDateFin.value = '';
 }
 
 function openFormEmploi(emploi = null) {
-    elements.formEmploiTitle.textContent = emploi ? 'Modifier l\'emploi' : 'Nouvel Emploi';
+    elements.formEmploiTitle.textContent = emploi ? "Modifier l'emploi" : 'Nouvel Emploi';
     elements.emploiId.value = emploi ? emploi.id : '';
     elements.emploiEntrepriseId.value = currentEntreprise.id;
     elements.emploiPoste.value = emploi ? emploi.poste : '';
     elements.emploiDateDebut.value = emploi ? emploi.dateDebut : '';
-    elements.emploiCdi.checked = emploi ? !emploi.cdi : true;
+    elements.emploiCdd.checked = emploi ? !emploi.cdi : true;   // coché = temps déterminé
     elements.emploiDateFin.value = emploi ? (emploi.dateFin || '') : '';
     elements.emploiTrajet.value = emploi ? (emploi.trajet || 0) : 0;
-    elements.emploiPauseRemuneree.checked = emploi ? emploi.pauseRemuneree : false;
+    elements.emploiPauseRemuneree.checked = emploi ? !!emploi.pauseRemuneree : false;
 
-    // Pause par défaut
-    if (emploi && emploi.pauseDefaut) {
-        const [h, m] = emploi.pauseDefaut.split(':');
-        elements.emploiPauseHeures.value = parseInt(h) || 0;
-        elements.emploiPauseMinutes.value = parseInt(m) || 30;
-    } else {
-        elements.emploiPauseHeures.value = 0;
-        elements.emploiPauseMinutes.value = 30;
-    }
+    const [h, m] = (emploi && emploi.pauseDefaut ? emploi.pauseDefaut : DEFAULT_PAUSE).split(':').map(Number);
+    elements.emploiPauseHeures.value = h;
+    elements.emploiPauseMinutes.value = m;
 
     updateDateFinVisibility();
     showPage('page-form-emploi', emploi ? 'Modifier' : 'Nouvel Emploi');
 }
 
-function updateDateFinVisibility() {
-    const isCDD = elements.emploiCdi.checked;
-    elements.groupDateFin.style.display = isCDD ? 'block' : 'none';
-    if (!isCDD) {
-        elements.emploiDateFin.value = '';
-    }
-}
-
 async function saveEmploi(event) {
     event.preventDefault();
-
-    const isCDD = elements.emploiCdi.checked;
+    const isCDD = elements.emploiCdd.checked;
     const id = elements.emploiId.value ? parseInt(elements.emploiId.value) : null;
+    const dateDebut = elements.emploiDateDebut.value;
+    const dateFin = isCDD ? elements.emploiDateFin.value : null;
 
-    // Récupérer l'emploi existant pour conserver heuresManuelles
-    let emploiExistant = {};
-    if (id) {
-        const allEmplois = await getAllFromStore('emplois');
-        emploiExistant = allEmplois.find(e => e.id === id) || {};
+    if (isCDD && dateFin < dateDebut) {
+        showToast('La date de fin est avant la date de début', 'error');
+        return;
     }
 
-    // Calculer pause par défaut
-    const pauseHeures = parseInt(elements.emploiPauseHeures.value) || 0;
-    const pauseMinutes = parseInt(elements.emploiPauseMinutes.value) || 30;
-    const pauseDefaut = `${pauseHeures.toString().padStart(2, '0')}:${pauseMinutes.toString().padStart(2, '0')}`;
-
-    const emploi = {
-        ...emploiExistant,
-        entrepriseId: parseInt(elements.emploiEntrepriseId.value),
-        poste: elements.emploiPoste.value.trim(),
-        dateDebut: elements.emploiDateDebut.value,
-        cdi: !isCDD,
-        dateFin: isCDD ? elements.emploiDateFin.value : null,
-        trajet: parseInt(elements.emploiTrajet.value) || 0,
-        pauseRemuneree: elements.emploiPauseRemuneree.checked,
-        pauseDefaut,  // NOUVEAU
-        lastModified: new Date().toISOString()
-    };
+    const ph = parseInt(elements.emploiPauseHeures.value);
+    const pm = parseInt(elements.emploiPauseMinutes.value);
+    const pauseDefaut = `${pad(isNaN(ph) ? 0 : ph)}:${pad(isNaN(pm) ? 30 : pm)}`;
 
     try {
+        const existing = id ? (await getByKey('emplois', id)) || {} : {};
+        const emploi = {
+            ...existing,   // conserve heuresManuelles et tout le reste
+            entrepriseId: parseInt(elements.emploiEntrepriseId.value),
+            poste: elements.emploiPoste.value.trim(),
+            dateDebut,
+            cdi: !isCDD,
+            dateFin,
+            trajet: parseInt(elements.emploiTrajet.value) || 0,
+            pauseRemuneree: elements.emploiPauseRemuneree.checked,
+            pauseDefaut,
+            lastModified: new Date().toISOString()
+        };
         if (id) {
             emploi.id = id;
             await updateInStore('emplois', emploi);
+            if (currentEmploi && currentEmploi.id === id) currentEmploi = emploi;
             showToast('Emploi modifié', 'success');
         } else {
             await addToStore('emplois', emploi);
             showToast('Emploi ajouté', 'success');
         }
-
         currentEntreprise.lastActivity = new Date().toISOString();
         await updateInStore('entreprises', currentEntreprise);
-
-        showPage('page-emplois', currentEntreprise.nom);
-        loadEmplois(currentEntreprise.id);
+        goToEmplois();
     } catch (error) {
-        showToast('Erreur lors de l\'enregistrement', 'error');
+        showToast("Erreur lors de l'enregistrement", 'error');
         console.error(error);
     }
+}
+
+// Semaine affichée à l'ouverture : aujourd'hui si le contrat est en cours, sinon début ou fin du contrat.
+function initialWeekFor(emploi) {
+    const today = todayISO();
+    let ref = today;
+    if (emploi.dateDebut && today < emploi.dateDebut) ref = emploi.dateDebut;
+    else if (!emploi.cdi && emploi.dateFin && today > emploi.dateFin) ref = emploi.dateFin;
+    return getMonday(parseISO(ref));
 }
 
 async function openEmploi(emploi) {
     currentEmploi = emploi;
     elements.heuresEmploiPoste.textContent = emploi.poste;
-    
-    let contratInfo = emploi.cdi ? 'CDI' : `CDD jusqu'au ${formatDate(emploi.dateFin)}`;
-    if (emploi.pauseRemuneree) contratInfo += ' • Pause rémunérée';
-    elements.heuresEmploiContrat.textContent = contratInfo;
-    
-    // Initialize week to current week or last modified week
-    currentWeekStart = getMonday(new Date());
-    
+    let info = emploi.cdi
+        ? `CDI depuis le ${formatDate(emploi.dateDebut)}`
+        : `CDD du ${formatDate(emploi.dateDebut)} au ${formatDate(emploi.dateFin)}`;
+    if (emploi.pauseRemuneree) info += ' • Pause rémunérée';
+    elements.heuresEmploiContrat.textContent = info;
+
+    currentWeekStart = initialWeekFor(emploi);
+    currentMonthKey = null;
     showPage('page-heures', emploi.poste);
     await renderWeekTable();
 }
 
-async function deleteEmploi() {
+function deleteEmploi() {
     showModal(
-        'Supprimer l\'emploi ?',
+        "Supprimer l'emploi ?",
         `Êtes-vous sûr de vouloir supprimer "${currentEmploi.poste}" et toutes les heures associées ?`,
         async () => {
             try {
-                // Delete all heures
                 const heures = await getByIndex('heures', 'emploiId', currentEmploi.id);
-                for (const heure of heures) {
-                    await deleteFromStore('heures', heure.id);
-                }
-                
+                for (const h of heures) await deleteFromStore('heures', h.id);
                 await deleteFromStore('emplois', currentEmploi.id);
                 showToast('Emploi supprimé', 'success');
-                showPage('page-emplois', currentEntreprise.nom);
-                loadEmplois(currentEntreprise.id);
+                goToEmplois();
             } catch (error) {
                 showToast('Erreur lors de la suppression', 'error');
                 console.error(error);
@@ -559,465 +503,91 @@ async function deleteEmploi() {
     );
 }
 
-// ===== Heures =====
-function getMonday(date) {
-    const d = new Date(date);
-    d.setHours(0, 0, 0, 0);
-    const day = d.getDay();
-    // Si dimanche (0), reculer de 6 jours; sinon reculer de (day - 1) jours
-    const diff = day === 0 ? -6 : 1 - day;
-    d.setDate(d.getDate() + diff);
-    return d;
+// ===== Saisie des heures : tableau hebdomadaire =====
+function dayQuery(cls, dateStr) {
+    return elements.heuresTable.querySelector(`.${cls}[data-date="${dateStr}"]`);
 }
 
-function addDays(date, days) {
-    const result = new Date(date);
-    result.setDate(result.getDate() + days);
-    return result;
+function readDayFromDOM(dateStr) {
+    return {
+        date: dateStr,
+        repos: dayQuery('repos-checkbox', dateStr)?.checked || false,
+        pause: dayQuery('input-pause', dateStr)?.value || '00:00',
+        debut: dayQuery('input-debut', dateStr)?.value || '',
+        fin: dayQuery('input-fin', dateStr)?.value || ''
+    };
 }
 
-function formatDateISO(date) {
-    const year = date.getFullYear();
-    const month = (date.getMonth() + 1).toString().padStart(2, '0');
-    const day = date.getDate().toString().padStart(2, '0');
-    return `${year}-${month}-${day}`;
+function timeCell(cls, dateStr, value) {
+    const td = document.createElement('td');
+    const input = document.createElement('input');
+    input.type = 'time';
+    input.className = cls;
+    input.dataset.date = dateStr;
+    input.value = value;
+    td.appendChild(input);
+    return td;
 }
-
-function formatDate(dateStr) {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit', year: 'numeric' });
-}
-
-function formatDateShort(date) {
-    return date.toLocaleDateString('fr-FR', { day: '2-digit', month: '2-digit' });
-}
-
-function formatDateFull(date) {
-    const d = date.getDate().toString().padStart(2, '0');
-    const m = (date.getMonth() + 1).toString().padStart(2, '0');
-    const y = date.getFullYear();
-    return `${d}/${m}/${y}`;
-}
-
-// Convertir heures décimales en format Xh:mm (ex: 124.60 → 124h36)
-function formatDecimalToHoursMinutes(decimalHours) {
-    const hours = Math.floor(decimalHours);
-    const minutes = Math.round((decimalHours - hours) * 60);
-    return `${hours}h${minutes.toString().padStart(2, '0')}`;
-}
-
-const JOURS = ['L', 'M', 'M', 'J', 'V', 'S', 'D'];
-const JOURS_FULL = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi', 'Dimanche'];
 
 async function renderWeekTable() {
+    if (!currentEmploi || !currentWeekStart) return;
+    const token = ++renderToken;
+    const list = await getByIndex('heures', 'emploiId', currentEmploi.id);
+    if (token !== renderToken) return;   // une navigation plus récente a pris le relais
+    heuresCache = new Map(list.map(h => [h.date, h]));
+
     const weekEnd = addDays(currentWeekStart, 6);
     elements.weekLabel.value = `${formatDateFull(currentWeekStart)} - ${formatDateFull(weekEnd)}`;
-    
-    // Clear previous content
+
     elements.rowDates.innerHTML = '<th></th>';
-    elements.rowRepos.innerHTML = '<th></th>';
+    elements.rowRepos.innerHTML = '<th>Repos</th>';
     elements.rowJours.innerHTML = '<th></th>';
-    
-    // Clear input rows (keep label cell)
-    const rowsToUpdate = [elements.rowPause, elements.rowDebut, elements.rowFin, elements.rowTotalJour];
-    rowsToUpdate.forEach(row => {
-        while (row.children.length > 1) {
-            row.removeChild(row.lastChild);
-        }
+    [elements.rowPause, elements.rowDebut, elements.rowFin, elements.rowTotalJour].forEach(row => {
+        while (row.children.length > 1) row.removeChild(row.lastChild);
     });
-    
-    // Get existing heures for this week
-    const heuresMap = {};
-    const allHeures = await getByIndex('heures', 'emploiId', currentEmploi.id);
-    allHeures.forEach(h => {
-        heuresMap[h.date] = h;
-    });
-    
-    // Render each day
+
+    const defaultPause = currentEmploi.pauseDefaut || DEFAULT_PAUSE;
+    const today = todayISO();
+
     for (let i = 0; i < 7; i++) {
         const dayDate = addDays(currentWeekStart, i);
         const dateStr = formatDateISO(dayDate);
-        const dayNum = dayDate.getDay();
-        const existingHeure = heuresMap[dateStr] || {};
-        
-        // Date header
+        const rec = heuresCache.get(dateStr) || {};
+
         const thDate = document.createElement('th');
         thDate.textContent = formatDateShort(dayDate);
+        if (dateStr === today) thDate.classList.add('today');
         elements.rowDates.appendChild(thDate);
-        
-        // Repos checkbox
+
         const thRepos = document.createElement('th');
-        thRepos.innerHTML = `
-            <label class="checkbox-container" title="Jour de repos">
-                <input type="checkbox" class="repos-checkbox" data-date="${dateStr}" ${existingHeure.repos ? 'checked' : ''}>
-                <span class="checkmark"></span>
-            </label>
-        `;
+        const cb = document.createElement('input');
+        cb.type = 'checkbox';
+        cb.className = 'repos-checkbox';
+        cb.dataset.date = dateStr;
+        cb.title = 'Jour de repos';
+        cb.checked = !!rec.repos;
+        thRepos.appendChild(cb);
         elements.rowRepos.appendChild(thRepos);
-        
-        // Day name (i = 0 pour lundi, 1 pour mardi, etc.)
+
         const thJour = document.createElement('th');
         thJour.textContent = JOURS[i];
         thJour.title = JOURS_FULL[i];
         elements.rowJours.appendChild(thJour);
-        
-        // Pause input
-        const tdPause = document.createElement('td');
-        const defaultPause = currentEmploi.pauseDefaut || '00:30';
-        tdPause.innerHTML = `<input type="time" class="input-pause" data-date="${dateStr}" value="${existingHeure.pause || defaultPause}">`;
-        elements.rowPause.appendChild(tdPause);
-        
-        // Début input
-        const tdDebut = document.createElement('td');
-        tdDebut.innerHTML = `<input type="time" class="input-debut" data-date="${dateStr}" value="${existingHeure.debut || ''}">`;
-        elements.rowDebut.appendChild(tdDebut);
-        
-        // Fin input
-        const tdFin = document.createElement('td');
-        tdFin.innerHTML = `<input type="time" class="input-fin" data-date="${dateStr}" value="${existingHeure.fin || ''}">`;
-        elements.rowFin.appendChild(tdFin);
-        
-        // Total jour
+
+        elements.rowPause.appendChild(timeCell('input-pause', dateStr, rec.pause !== undefined ? rec.pause : defaultPause));
+        elements.rowDebut.appendChild(timeCell('input-debut', dateStr, rec.debut || ''));
+        elements.rowFin.appendChild(timeCell('input-fin', dateStr, rec.fin || ''));
+
         const tdTotal = document.createElement('td');
         tdTotal.className = 'total-cell';
         tdTotal.id = `total-jour-${dateStr}`;
         tdTotal.textContent = '0H00';
         elements.rowTotalJour.appendChild(tdTotal);
     }
-    
-    // Add event listeners
-    document.querySelectorAll('.repos-checkbox').forEach(cb => {
-        cb.addEventListener('change', handleReposChange);
-    });
-    
-    document.querySelectorAll('.input-pause, .input-debut, .input-fin').forEach(input => {
-        input.addEventListener('change', calculateTotals);
-    });
-    
-    // Initial calculation
-    calculateTotals();
-    await calculateMonthlyAndYearlyTotals();
 
-    await checkHeuresManuelles();
-
-        // Vérifier si le mois a des heures manuelles et griser les inputs
-    const monthKey = `${currentWeekStart.getFullYear()}-${(currentWeekStart.getMonth() + 1).toString().padStart(2, '0')}`;
-    const hasHeuresManuelles = currentEmploi.heuresManuelles && currentEmploi.heuresManuelles[monthKey] !== undefined;
-    
-    if (hasHeuresManuelles) {
-        elements.heuresManuellesCheck.checked = true;
-        elements.heuresManuellesInput.classList.remove('hidden');
-        elements.heuresManuellesValue.value = currentEmploi.heuresManuelles[monthKey];
-        
-        // Griser les inputs du mois
-        const currentMonth = currentWeekStart.getMonth();
-        const currentYear = currentWeekStart.getFullYear();
-        
-        document.querySelectorAll('.heures-table input[type="time"]').forEach(input => {
-            const dateStr = input.dataset.date;
-            if (dateStr) {
-                const inputDate = new Date(dateStr);
-                if (inputDate.getMonth() === currentMonth && inputDate.getFullYear() === currentYear) {
-                    input.disabled = true;
-                    input.classList.add('disabled-manuel');
-                }
-            }
-        });
-    } else {
-        elements.heuresManuellesCheck.checked = false;
-        elements.heuresManuellesInput.classList.add('hidden');
-        elements.heuresManuellesValue.value = '';
-    }
-}
-
-async function checkHeuresManuelles() {
-    if (!currentEmploi || !currentWeekStart) {
-        elements.heuresManuellesCheck.checked = false;
-        elements.heuresManuellesInput.classList.add('hidden');
-        return;
-    }
-
-    const monthKey = `${currentWeekStart.getFullYear()}-${(currentWeekStart.getMonth() + 1).toString().padStart(2, '0')}`;
-    const heuresManuelles = currentEmploi.heuresManuelles || {};
-
-    if (heuresManuelles[monthKey] !== undefined) {
-        elements.heuresManuellesCheck.checked = true;
-        elements.heuresManuellesInput.classList.remove('hidden');
-        elements.heuresManuellesValue.value = heuresManuelles[monthKey];
-        document.querySelector('.heures-table')?.classList.add('mois-manuel');
-    } else {
-        elements.heuresManuellesCheck.checked = false;
-        elements.heuresManuellesInput.classList.add('hidden');
-        elements.heuresManuellesValue.value = '';
-        document.querySelector('.heures-table')?.classList.remove('mois-manuel');
-    }
-}
-
-function handleReposChange(event) {
-    const dateStr = event.target.dataset.date;
-    const isRepos = event.target.checked;
-    
-    // Disable/enable inputs for this day
-    const inputs = document.querySelectorAll(`[data-date="${dateStr}"]`);
-    inputs.forEach(input => {
-        if (input.type !== 'checkbox') {
-            input.disabled = isRepos;
-            if (isRepos) {
-                input.value = input.classList.contains('input-pause') ? '00:00' : '';
-            }
-        }
-    });
-    
-    calculateTotals();
-}
-
-function timeToMinutes(timeStr) {
-    if (!timeStr) return 0;
-    const [hours, minutes] = timeStr.split(':').map(Number);
-    return hours * 60 + minutes;
-}
-
-function minutesToTime(minutes) {
-    if (minutes < 0) minutes = 0;
-    const h = Math.floor(minutes / 60);
-    const m = minutes % 60;
-    return `${h}H${m.toString().padStart(2, '0')}`;
-}
-
-function decimalHoursToHHMM(decimalHours) {
-    const hours = Math.floor(decimalHours);
-    const minutes = Math.round((decimalHours - hours) * 60);
-    return `${hours}H${minutes.toString().padStart(2, '0')}`;
-}
-
-function calculateTotals() {
-    let totalSemaine = 0;
-    let totalSemaineAvecPauses = 0;
-    let joursTravailes = 0;
-    
-    for (let i = 0; i < 7; i++) {
-        const dayDate = addDays(currentWeekStart, i);
-        const dateStr = formatDateISO(dayDate);
-        
-        const reposCheckbox = document.querySelector(`.repos-checkbox[data-date="${dateStr}"]`);
-        const pauseInput = document.querySelector(`.input-pause[data-date="${dateStr}"]`);
-        const debutInput = document.querySelector(`.input-debut[data-date="${dateStr}"]`);
-        const finInput = document.querySelector(`.input-fin[data-date="${dateStr}"]`);
-        const totalJourCell = document.getElementById(`total-jour-${dateStr}`);
-        
-        if (reposCheckbox && reposCheckbox.checked) {
-            totalJourCell.textContent = '0H00';
-            continue;
-        }
-        
-        const pauseMinutes = timeToMinutes(pauseInput?.value || '00:00');
-        const debutMinutes = timeToMinutes(debutInput?.value);
-        const finMinutes = timeToMinutes(finInput?.value);
-        
-        let totalJour = 0;
-        let totalJourAvecPause = 0;
-        
-        if (debutMinutes && finMinutes && finMinutes > debutMinutes) {
-            totalJourAvecPause = finMinutes - debutMinutes;
-            
-            if (currentEmploi.pauseRemuneree) {
-                totalJour = totalJourAvecPause;
-            } else {
-                totalJour = totalJourAvecPause - pauseMinutes;
-            }
-            
-            joursTravailes++;
-        }
-        
-        if (totalJourCell) {
-            totalJourCell.textContent = minutesToTime(totalJour);
-        }
-        
-        totalSemaine += totalJour;
-        totalSemaineAvecPauses += totalJourAvecPause;
-    }
-    
-    elements.totalSemaine.textContent = minutesToTime(totalSemaine);
-    
-    // Temps réel (avec pauses)
-    elements.tempsReel.textContent = minutesToTime(totalSemaineAvecPauses);
-    
-    // Temps réel + trajets
-    const trajetMinutes = currentEmploi.trajet || 0;
-    const totalTrajet = totalSemaineAvecPauses + (trajetMinutes * 2 * joursTravailes);
-    elements.tempsReelTrajet.textContent = minutesToTime(totalTrajet);
-}
-
-async function calculateMonthlyAndYearlyTotals() {
-    if (!currentEmploi || !currentWeekStart) return;
-
-    const currentMonth = currentWeekStart.getMonth();
-    const currentYear = currentWeekStart.getFullYear();
-    const monthKey = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
-
-    let monthlyMinutes = 0;
-    let yearlyMinutes = 0;
-    let cumulTotalMinutes = 0;
-
-    const heuresManuelles = currentEmploi.heuresManuelles || {};
-
-    // Fonction helper pour calculer les minutes d'une journée
-    function calculateDayMinutes(h) {
-        if (!h || h.repos) return 0;
-        if (!h.debut || !h.fin) return 0;
-        
-        const debut = timeToMinutes(h.debut);
-        const fin = timeToMinutes(h.fin);
-        const pause = timeToMinutes(h.pause || '00:00');
-        
-        if (fin > debut) {
-            return (fin - debut) - pause;
-        }
-        return 0;
-    }
-
-    // Récupérer toutes les heures de cet emploi depuis le store
-    const allHeures = await getByIndex('heures', 'emploiId', currentEmploi.id);
-
-    // Calculer le mois courant
-    if (heuresManuelles[monthKey] !== undefined) {
-        const decimalHours = heuresManuelles[monthKey];
-        const hours = Math.floor(decimalHours);
-        const mins = Math.round((decimalHours - hours) * 60);
-        monthlyMinutes = hours * 60 + mins;
-    } else {
-        allHeures.forEach(h => {
-            const date = new Date(h.date);
-            if (date.getMonth() === currentMonth && date.getFullYear() === currentYear) {
-                monthlyMinutes += calculateDayMinutes(h);
-            }
-        });
-    }
-
-    // Calculer l'année courante
-    const moisAvecHeuresManuelles = new Set();
-    
-    Object.entries(heuresManuelles).forEach(([key, value]) => {
-        const [y, m] = key.split('-').map(Number);
-        if (y === currentYear) {
-            const hours = Math.floor(value);
-            const mins = Math.round((value - hours) * 60);
-            yearlyMinutes += hours * 60 + mins;
-            moisAvecHeuresManuelles.add(m);
-        }
-    });
-
-    allHeures.forEach(h => {
-        const date = new Date(h.date);
-        if (date.getFullYear() === currentYear && !moisAvecHeuresManuelles.has(date.getMonth() + 1)) {
-            yearlyMinutes += calculateDayMinutes(h);
-        }
-    });
-
-    // ========== NOUVEAU : Calculer le cumul total (toutes années confondues) ==========
-    
-    // Regrouper par année pour éviter les doublons
-    const minutesParAnnee = {};
-    
-    // Ajouter toutes les heures manuelles
-    Object.entries(heuresManuelles).forEach(([key, value]) => {
-        const [y, m] = key.split('-').map(Number);
-        if (!minutesParAnnee[y]) {
-            minutesParAnnee[y] = { manuels: new Set(), heuresJournalieres: 0, heuresManuelles: 0 };
-        }
-        const hours = Math.floor(value);
-        const mins = Math.round((value - hours) * 60);
-        minutesParAnnee[y].heuresManuelles += hours * 60 + mins;
-        minutesParAnnee[y].manuels.add(m);
-    });
-
-    // Ajouter les heures journalières pour les mois sans heures manuelles
-    allHeures.forEach(h => {
-        const date = new Date(h.date);
-        const y = date.getFullYear();
-        const m = date.getMonth() + 1;
-        
-        if (!minutesParAnnee[y]) {
-            minutesParAnnee[y] = { manuels: new Set(), heuresJournalieres: 0, heuresManuelles: 0 };
-        }
-        
-        if (!minutesParAnnee[y].manuels.has(m)) {
-            minutesParAnnee[y].heuresJournalieres += calculateDayMinutes(h);
-        }
-    });
-
-    // Sommer toutes les années
-    Object.values(minutesParAnnee).forEach(annee => {
-        cumulTotalMinutes += annee.heuresManuelles + annee.heuresJournalieres;
-    });
-
-    // ========== Affichage ==========
-    
-    // Temps du mois
-    const monthlyHours = Math.floor(monthlyMinutes / 60);
-    const monthlyMins = monthlyMinutes % 60;
-    elements.totalMois.textContent = `${monthlyHours}H${monthlyMins.toString().padStart(2, '0')}`;
-
-    // Temps de l'année
-    const yearlyHours = Math.floor(yearlyMinutes / 60);
-    const yearlyMins = yearlyMinutes % 60;
-    elements.totalAnnee.textContent = `${yearlyHours}H${yearlyMins.toString().padStart(2, '0')}`;
-
-    // Cumul total (toutes années)
-    const cumulHours = Math.floor(cumulTotalMinutes / 60);
-    const cumulMins = cumulTotalMinutes % 60;
-    if (elements.cumulTotalEmploi) {
-        elements.cumulTotalEmploi.textContent = `${cumulHours}H${cumulMins.toString().padStart(2, '0')}`;
-    }
-}
-
-async function saveHeures() {
-    try {
-        for (let i = 0; i < 7; i++) {
-            const dayDate = addDays(currentWeekStart, i);
-            const dateStr = formatDateISO(dayDate);
-            
-            const reposCheckbox = document.querySelector(`.repos-checkbox[data-date="${dateStr}"]`);
-            const pauseInput = document.querySelector(`.input-pause[data-date="${dateStr}"]`);
-            const debutInput = document.querySelector(`.input-debut[data-date="${dateStr}"]`);
-            const finInput = document.querySelector(`.input-fin[data-date="${dateStr}"]`);
-            
-            const heureData = {
-                emploiId: currentEmploi.id,
-                date: dateStr,
-                repos: reposCheckbox?.checked || false,
-                pause: pauseInput?.value || '00:00',
-                debut: debutInput?.value || '',
-                fin: finInput?.value || ''
-            };
-            
-            // Check if entry exists
-            const existing = await getByIndex('heures', 'emploiId', currentEmploi.id);
-            const existingHeure = existing.find(h => h.date === dateStr);
-            
-            if (existingHeure) {
-                heureData.id = existingHeure.id;
-                await updateInStore('heures', heureData);
-            } else {
-                await addToStore('heures', heureData);
-            }
-        }
-        
-        // Update emploi lastModified
-        currentEmploi.lastModified = new Date().toISOString();
-        await updateInStore('emplois', currentEmploi);
-        
-        // Update entreprise lastActivity
-        currentEntreprise.lastActivity = new Date().toISOString();
-        await updateInStore('entreprises', currentEntreprise);
-        
-        await calculateMonthlyAndYearlyTotals();
-        showToast('Heures enregistrées', 'success');
-    } catch (error) {
-        showToast('Erreur lors de l\'enregistrement', 'error');
-        console.error(error);
-    }
+    updateManualPanel();
+    applyDayStates();
+    refreshTotals();
 }
 
 async function navigateWeek(direction) {
@@ -1025,181 +595,319 @@ async function navigateWeek(direction) {
     await renderWeekTable();
 }
 
-// ===== Export ODS =====
-async function exportAllToODS() {
+// ===== Saisie manuelle mensuelle =====
+function weekMonthKeys() {
+    const a = monthKeyOf(currentWeekStart);
+    const b = monthKeyOf(addDays(currentWeekStart, 6));
+    return a === b ? [a] : [a, b];
+}
+
+function updateManualPanel() {
+    const keys = weekMonthKeys();
+    if (!keys.includes(currentMonthKey)) currentMonthKey = keys[0];
+
+    elements.heuresManuellesMoisLabel.textContent = monthLabel(currentMonthKey);
+    elements.heuresManuellesMoisLabel.classList.toggle('hidden', keys.length > 1);
+    const sel = elements.heuresManuellesMoisSelect;
+    sel.innerHTML = keys.map(k => `<option value="${k}">${monthLabel(k)}</option>`).join('');
+    sel.value = currentMonthKey;
+    sel.classList.toggle('hidden', keys.length < 2);
+
+    const value = (currentEmploi.heuresManuelles || {})[currentMonthKey];
+    const has = value !== undefined;
+    elements.heuresManuellesCheck.checked = has;
+    elements.heuresManuellesInput.classList.toggle('hidden', !has);
+    elements.heuresManuellesValue.value = has ? value : '';
+}
+
+// Mois dont les jours sont verrouillés : ceux déjà saisis en manuel + le mois en cours de saisie manuelle.
+function getLockedMonths() {
+    const set = new Set(Object.keys(currentEmploi.heuresManuelles || {}));
+    if (elements.heuresManuellesCheck.checked && currentMonthKey) set.add(currentMonthKey);
+    return set;
+}
+
+// Active/désactive les champs de chaque jour (mois verrouillé, jour de repos).
+function applyDayStates() {
+    const locked = getLockedMonths();
+    for (let i = 0; i < 7; i++) {
+        const dateStr = formatDateISO(addDays(currentWeekStart, i));
+        const isLocked = locked.has(dateStr.slice(0, 7));
+        const repos = dayQuery('repos-checkbox', dateStr);
+        repos.disabled = isLocked;
+        ['input-pause', 'input-debut', 'input-fin'].forEach(cls => {
+            dayQuery(cls, dateStr).disabled = isLocked || repos.checked;
+        });
+        [repos, dayQuery('input-pause', dateStr), dayQuery('input-debut', dateStr), dayQuery('input-fin', dateStr),
+            document.getElementById(`total-jour-${dateStr}`)]
+            .forEach(el => el.closest('td, th').classList.toggle('cell-locked', isLocked));
+    }
+}
+
+function handleReposChange(event) {
+    const cb = event.target;
+    const dateStr = cb.dataset.date;
+    if (cb.checked) {
+        dayQuery('input-debut', dateStr).value = '';
+        dayQuery('input-fin', dateStr).value = '';
+        dayQuery('input-pause', dateStr).value = '00:00';
+    } else {
+        dayQuery('input-pause', dateStr).value = currentEmploi.pauseDefaut || DEFAULT_PAUSE;
+    }
+    applyDayStates();
+    refreshTotals();
+}
+
+// ===== Totaux (semaine, mois, année, cumul) — recalculés en direct pendant la saisie =====
+function refreshTotals() {
+    if (!currentEmploi || !currentWeekStart) return;
+    const locked = getLockedMonths();
+    let weekNet = 0, weekGross = 0, worked = 0;
+    const overrides = {};
+
+    for (let i = 0; i < 7; i++) {
+        const dateStr = formatDateISO(addDays(currentWeekStart, i));
+        const rec = readDayFromDOM(dateStr);
+        overrides[dateStr] = rec;
+        const cell = document.getElementById(`total-jour-${dateStr}`);
+        if (locked.has(dateStr.slice(0, 7))) { cell.textContent = '—'; continue; }
+        const net = netMinutes(rec, currentEmploi);
+        const gross = grossMinutes(rec);
+        cell.textContent = minutesToTime(net);
+        weekNet += net;
+        weekGross += gross;
+        if (gross > 0) worked++;
+    }
+
+    elements.totalSemaine.textContent = minutesToTime(weekNet);
+    elements.tempsReel.textContent = minutesToTime(weekGross);
+    const trajet = currentEmploi.trajet || 0;
+    elements.tempsReelTrajet.textContent = minutesToTime(weekGross + trajet * 2 * worked);
+
+    const per = computePerMonth(currentEmploi, heuresCache, overrides, locked);
+    const year = currentMonthKey.slice(0, 4);
+    let yearTotal = 0, cumul = 0;
+    Object.entries(per).forEach(([k, v]) => {
+        cumul += v;
+        if (k.startsWith(year)) yearTotal += v;
+    });
+    elements.totalMois.textContent = minutesToTime(per[currentMonthKey] || 0);
+    elements.totalAnnee.textContent = minutesToTime(yearTotal);
+    elements.cumulTotalEmploi.textContent = minutesToTime(cumul);
+}
+
+async function saveHeures() {
+    if (!currentEmploi) return;
     try {
-        const entreprises = await getAllFromStore('entreprises');
-        
-        if (entreprises.length === 0) {
-            showToast('Aucune donnée à exporter', 'error');
-            return;
-        }
-        
-        for (const entreprise of entreprises) {
-            const emplois = await getByIndex('emplois', 'entrepriseId', entreprise.id);
-            
-            for (const emploi of emplois) {
-                await exportEmploiToODS(entreprise, emploi);
+        const locked = getLockedMonths();
+        const existing = await getByIndex('heures', 'emploiId', currentEmploi.id);
+        const byDate = new Map(existing.map(h => [h.date, h]));
+
+        for (let i = 0; i < 7; i++) {
+            const dateStr = formatDateISO(addDays(currentWeekStart, i));
+            if (locked.has(dateStr.slice(0, 7))) continue;   // mois en saisie manuelle : on ne touche à rien
+            const rec = readDayFromDOM(dateStr);
+            const old = byDate.get(dateStr);
+
+            if (!rec.repos && !rec.debut && !rec.fin) {      // jour vide : rien à stocker
+                if (old) await deleteFromStore('heures', old.id);
+                continue;
             }
+            const data = { emploiId: currentEmploi.id, date: dateStr, repos: rec.repos, pause: rec.pause, debut: rec.debut, fin: rec.fin };
+            if (old) { data.id = old.id; await updateInStore('heures', data); }
+            else await addToStore('heures', data);
         }
-        
-        showToast('Export terminé', 'success');
+
+        await touchActivity();
+        const fresh = await getByIndex('heures', 'emploiId', currentEmploi.id);
+        heuresCache = new Map(fresh.map(h => [h.date, h]));
+        refreshTotals();
+        showToast('Heures enregistrées', 'success');
     } catch (error) {
-        showToast('Erreur lors de l\'export', 'error');
+        showToast("Erreur lors de l'enregistrement", 'error');
         console.error(error);
     }
 }
 
-async function exportEmploiToODS(entreprise, emploi) {
-    const heures = await getByIndex('heures', 'emploiId', emploi.id);
-    
-    // Sort heures by date
-    heures.sort((a, b) => new Date(a.date) - new Date(b.date));
-    
-    // Create ODS content (simplified XML format)
-    const odsContent = generateODSContent(entreprise, emploi, heures);
-    
-    // Create and download file
-    const filename = `${sanitizeFilename(entreprise.nom)}-${sanitizeFilename(emploi.poste)}.ods`;
-    await downloadODS(odsContent, filename);
+async function persistManual(heuresManuelles) {
+    currentEmploi.heuresManuelles = heuresManuelles;
+    await touchActivity();
 }
 
+async function onManualCheckChange() {
+    const manual = currentEmploi.heuresManuelles || {};
+    if (elements.heuresManuellesCheck.checked) {
+        elements.heuresManuellesInput.classList.remove('hidden');
+        elements.heuresManuellesValue.focus();
+    } else if (manual[currentMonthKey] !== undefined) {
+        showModal(
+            'Supprimer la saisie manuelle ?',
+            `Les ${manual[currentMonthKey]} h saisies pour ${monthLabel(currentMonthKey)} seront supprimées. Les jours détaillés éventuels redeviendront utilisables.`,
+            async () => {
+                const copy = { ...manual };
+                delete copy[currentMonthKey];
+                await persistManual(copy);
+                updateManualPanel();
+                applyDayStates();
+                refreshTotals();
+                showToast('Saisie manuelle supprimée');
+            },
+            () => { elements.heuresManuellesCheck.checked = true; }
+        );
+        return;
+    } else {
+        elements.heuresManuellesInput.classList.add('hidden');
+        elements.heuresManuellesValue.value = '';
+    }
+    applyDayStates();
+    refreshTotals();
+}
+
+async function onManualSave() {
+    if (!currentEmploi || !currentMonthKey) return;
+    const value = parseDecimal(elements.heuresManuellesValue.value);
+    if (isNaN(value) || value < 0) {
+        showToast("Veuillez entrer un nombre d'heures valide", 'error');
+        return;
+    }
+    try {
+        await persistManual({ ...(currentEmploi.heuresManuelles || {}), [currentMonthKey]: round2(value) });
+        applyDayStates();
+        refreshTotals();
+        showToast('Heures mensuelles enregistrées', 'success');
+    } catch (error) {
+        showToast("Erreur lors de l'enregistrement", 'error');
+        console.error(error);
+    }
+}
+
+// ===== Export : un ZIP, un dossier par entreprise, un .ods par emploi =====
+const escapeXml = text => String(text)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&apos;');
+
+function sanitizeFilename(name) {
+    return String(name).normalize('NFC').replace(/[^\p{L}\p{N}_-]+/gu, '_').replace(/^_+|_+$/g, '').slice(0, 60) || 'sans_nom';
+}
+
+function uniqueName(base, usedSet, ext = '') {
+    let name = base + ext, n = 2;
+    while (usedSet.has(name.toLowerCase())) name = `${base}_${n++}${ext}`;
+    usedSet.add(name.toLowerCase());
+    return name;
+}
+
+// Quels mois exporter, et quels jours dans chaque mois.
+// Période = du début du contrat à sa fin (CDI : jusqu'à la dernière saisie). Les jours saisis hors période sont conservés.
+// Les mois sans aucune saisie ne sont pas exportés.
+function buildMonthPlan(emploi, heures) {
+    const manual = emploi.heuresManuelles || {};
+    const meaningful = heures.filter(h => h.repos || h.debut || h.fin).map(h => h.date).sort();
+    const months = new Set([...Object.keys(manual), ...meaningful.map(d => d.slice(0, 7))]);
+    const lastData = meaningful.length ? meaningful[meaningful.length - 1] : null;
+    const start = emploi.dateDebut || meaningful[0] || null;
+    const end = emploi.cdi ? lastData : (emploi.dateFin || lastData);
+
+    return [...months].sort().map(mk => {
+        if (manual[mk] !== undefined) return { monthKey: mk, manual: manual[mk] };
+        const [y, m] = mk.split('-').map(Number);
+        const first = `${mk}-01`;
+        const last = `${mk}-${pad(new Date(y, m, 0).getDate())}`;
+        const dates = new Set(meaningful.filter(d => d.startsWith(mk)));
+        if (start && end) {
+            const from = start > first ? start : first;
+            const to = end < last ? end : last;
+            for (let d = parseISO(from); formatDateISO(d) <= to; d = addDays(d, 1)) dates.add(formatDateISO(d));
+        }
+        return { monthKey: mk, dates: [...dates].sort() };
+    });
+}
+
+function sheetName(monthKey) {
+    const [y, m] = monthKey.split('-');
+    return `${MOIS[Number(m) - 1]}_${y}`;
+}
+
+const strCell = v => `<table:table-cell office:value-type="string"><text:p>${escapeXml(v ?? '')}</text:p></table:table-cell>`;
+const numCell = v => `<table:table-cell office:value-type="float" office:value="${v}"><text:p>${v}</text:p></table:table-cell>`;
+const emptyCell = () => '<table:table-cell/>';
+const row = (...cells) => `<table:table-row>${cells.join('')}</table:table-row>`;
+
 function generateODSContent(entreprise, emploi, heures) {
-    const monthlyData = {};
+    const recs = new Map(heures.map(h => [h.date, h]));
+    const per = computePerMonth(emploi, recs);
+    const totalHeures = round2(Object.values(per).reduce((a, b) => a + b, 0) / 60);
 
-    heures.forEach(heure => {
-        const date = new Date(heure.date);
-        const monthKey = `${date.getFullYear()}-${(date.getMonth() + 1).toString().padStart(2, '0')}`;
-        if (!monthlyData[monthKey]) {
-            monthlyData[monthKey] = [];
-        }
-        monthlyData[monthKey].push(heure);
-    });
+    let sheets = `<table:table table:name="Informations">`
+        + row(strCell('Entreprise'), strCell(entreprise.nom))
+        + row(strCell('Adresse'), strCell(entreprise.adresse))
+        + row(strCell('Poste'), strCell(emploi.poste))
+        + row(strCell('Type de contrat'), strCell(emploi.cdi ? 'CDI' : 'CDD'))
+        + row(strCell('Date de début'), strCell(formatDate(emploi.dateDebut)))
+        + (emploi.cdi ? '' : row(strCell('Date de fin'), strCell(formatDate(emploi.dateFin))))
+        + row(strCell('Temps de trajet'), strCell(`${emploi.trajet || 0} minutes`))
+        + row(strCell('Pause rémunérée'), strCell(emploi.pauseRemuneree ? 'Oui' : 'Non'))
+        + row(strCell('Pause par défaut'), strCell(emploi.pauseDefaut || DEFAULT_PAUSE))
+        + row(strCell('Total heures travaillées'), numCell(totalHeures))
+        + `</table:table>`;
 
-    // Récupérer les heures manuelles
-    const heuresManuelles = emploi.heuresManuelles || {};
+    buildMonthPlan(emploi, heures).forEach(plan => {
+        sheets += `<table:table table:name="${escapeXml(sheetName(plan.monthKey))}">`;
 
-    // DEBUG - Afficher dans la console
-    console.log('=== DEBUG EXPORT ===');
-    console.log('Emploi:', emploi.poste);
-    console.log('heuresManuelles de emploi:', emploi.heuresManuelles);
-    console.log('Object.keys(heuresManuelles):', Object.keys(heuresManuelles));
-    console.log('Object.keys(monthlyData):', Object.keys(monthlyData));
-    console.log('Nombre heures détaillées:', heures.length);
-
-    // Fusionner tous les mois
-    const allMonths = new Set([
-        ...Object.keys(monthlyData),
-        ...Object.keys(heuresManuelles)
-    ]);
-    const sortedMonths = Array.from(allMonths).sort();
-    
-    console.log('Tous les mois fusionnés:', sortedMonths);
-    console.log('Nombre total de mois:', sortedMonths.length);
-    console.log('====================');
-
-    let sheets = '';
-
-    const cell = (value) => `<table:table-cell office:value-type="string"><text:p>${escapeXml(String(value ?? ''))}</text:p></table:table-cell>`;
-    const emptyCell = () => `<table:table-cell office:value-type="string"/>`;
-
-    sheets += `<table:table table:name="Informations">
-        <table:table-row>${cell('Entreprise')}${cell(entreprise.nom)}</table:table-row>
-        <table:table-row>${cell('Adresse')}${cell(entreprise.adresse)}</table:table-row>
-        <table:table-row>${cell('Poste')}${cell(emploi.poste)}</table:table-row>
-        <table:table-row>${cell('Type de contrat')}${cell(emploi.cdi ? 'CDI' : 'CDD')}</table:table-row>
-        <table:table-row>${cell('Date de début')}${cell(formatDate(emploi.dateDebut))}</table:table-row>
-        ${!emploi.cdi ? `<table:table-row>${cell('Date de fin')}${cell(formatDate(emploi.dateFin))}</table:table-row>` : ''}
-        <table:table-row>${cell('Temps de trajet')}${cell((emploi.trajet || 0) + ' minutes')}</table:table-row>
-        <table:table-row>${cell('Pause rémunérée')}${cell(emploi.pauseRemuneree ? 'Oui' : 'Non')}</table:table-row>
-    </table:table>`;
-
-    sortedMonths.forEach(monthKey => {
-    const [year, month] = monthKey.split('-');
-    const monthName = new Date(year, parseInt(month) - 1).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' });
-
-    if (heuresManuelles[monthKey] !== undefined) {
-        const heuresDecimales = heuresManuelles[monthKey];
-        console.log(`Export mois manuel: ${monthKey} = ${heuresDecimales}h`);
-
-        sheets += `<table:table table:name="${escapeXml(monthName)}">
-            <table:table-row>${cell('Type de saisie')}${cell('Heures manuelles')}</table:table-row>
-            <table:table-row>${cell('Total du mois (heures)')}${cell(heuresDecimales)}</table:table-row>
-            <table:table-row>${cell('Total du mois')}${cell(decimalHoursToHHMM(heuresDecimales))}</table:table-row>
-        </table:table>`;  
-    }   
-        else if (monthlyData[monthKey]) {
-    
-            const monthHeures = monthlyData[monthKey];
-            console.log(`Export mois détaillé: ${monthKey} = ${monthHeures.length} jours`);
-            
-            sheets += `<table:table table:name="${escapeXml(monthName)}">
-                <table:table-row>${cell('Date')}${cell('Jour')}${cell('Repos')}${cell('Début')}${cell('Fin')}${cell('Pause')}${cell('Total')}</table:table-row>`;
-
+        if (plan.manual !== undefined) {
+            const minutes = decimalHoursToMinutes(plan.manual);
+            sheets += row(strCell('Type de saisie'), strCell('Heures manuelles'))
+                + row(strCell('Total du mois (heures)'), numCell(plan.manual))
+                + row(strCell('Total du mois'), strCell(minutesToTime(minutes)));
+        } else {
+            sheets += row(...['Date', 'Jour', 'Repos', 'Début', 'Fin', 'Pause', 'Total', 'Total (h décimales)'].map(strCell));
             let monthTotal = 0;
-
-            monthHeures.forEach(heure => {
-                const date = new Date(heure.date);
-                const dayIndex = date.getDay() === 0 ? 6 : date.getDay() - 1;
-                const jourNom = JOURS_FULL[dayIndex];
-
-                let total = 0;
-                if (!heure.repos && heure.debut && heure.fin) {
-                    const debutMin = timeToMinutes(heure.debut);
-                    const finMin = timeToMinutes(heure.fin);
-                    const pauseMin = timeToMinutes(heure.pause || '00:00');
-                    if (finMin > debutMin) {
-                        total = emploi.pauseRemuneree ? (finMin - debutMin) : (finMin - debutMin - pauseMin);
-                    }
+            plan.dates.forEach(date => {
+                const rec = recs.get(date);
+                const jour = JOURS_FULL[(parseISO(date).getDay() + 6) % 7];
+                if (!rec) {
+                    sheets += row(strCell(formatDate(date)), strCell(jour), ...Array(6).fill(0).map(emptyCell));
+                    return;
                 }
-                monthTotal += total;
-
-                sheets += `<table:table-row>${cell(formatDate(heure.date))}${cell(jourNom)}${cell(heure.repos ? 'Oui' : 'Non')}${cell(heure.debut || '')}${cell(heure.fin || '')}${cell(heure.pause || '00:00')}${cell(minutesToTime(total))}</table:table-row>`;
+                const net = netMinutes(rec, emploi);
+                monthTotal += net;
+                sheets += row(
+                    strCell(formatDate(date)), strCell(jour), strCell(rec.repos ? 'Oui' : 'Non'),
+                    strCell(rec.debut || ''), strCell(rec.fin || ''), strCell(rec.pause || '00:00'),
+                    strCell(minutesToTime(net)), numCell(round2(net / 60)));
             });
-
-            sheets += `<table:table-row>${cell('Total du mois')}${emptyCell()}${emptyCell()}${emptyCell()}${emptyCell()}${emptyCell()}${cell(minutesToTime(monthTotal))}</table:table-row>`;
-            sheets += `</table:table>`;
+            sheets += row(strCell('Total du mois'), ...Array(5).fill(0).map(emptyCell),
+                strCell(minutesToTime(monthTotal)), numCell(round2(monthTotal / 60)));
         }
+        sheets += `</table:table>`;
     });
-
     return sheets;
 }
 
-async function downloadODS(content, filename) {
+function wrapContentXml(sheets) {
+    return `<?xml version="1.0" encoding="UTF-8"?>
+<office:document-content xmlns:office="${NS.office}" xmlns:table="${NS.table}" xmlns:text="${NS.text}" office:version="1.2">
+<office:body><office:spreadsheet>${sheets}</office:spreadsheet></office:body>
+</office:document-content>`;
+}
+
+async function buildODS(entreprise, emploi, heures) {
     const zip = new JSZip();
-    
-    zip.file('mimetype', 'application/vnd.oasis.opendocument.spreadsheet', { compression: 'STORE' });
-    
+    const mime = 'application/vnd.oasis.opendocument.spreadsheet';
+    zip.file('mimetype', mime, { compression: 'STORE' });   // doit être le premier fichier, non compressé
     zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">
-    <manifest:file-entry manifest:full-path="/" manifest:media-type="application/vnd.oasis.opendocument.spreadsheet"/>
-    <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
-    <manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>
+<manifest:file-entry manifest:full-path="/" manifest:media-type="${mime}"/>
+<manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
+<manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>
 </manifest:manifest>`);
-    
     zip.file('styles.xml', `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-styles xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0" 
-                        xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0"
-                        office:version="1.2">
-</office:document-styles>`);
-    
-    zip.file('content.xml', `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"
-                         xmlns:table="urn:oasis:names:tc:opendocument:xmlns:table:1.0"
-                         xmlns:text="urn:oasis:names:tc:opendocument:xmlns:text:1.0"
-                         office:version="1.2">
-    <office:body>
-        <office:spreadsheet>
-            ${content}
-        </office:spreadsheet>
-    </office:body>
-</office:document-content>`);
-    
-    const blob = await zip.generateAsync({ 
-        type: 'blob',
-        mimeType: 'application/vnd.oasis.opendocument.spreadsheet'
-    });
-    
+<office:document-styles xmlns:office="${NS.office}" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.2"></office:document-styles>`);
+    zip.file('content.xml', wrapContentXml(generateODSContent(entreprise, emploi, heures)));
+    return zip.generateAsync({ type: 'uint8array', mimeType: mime, compression: 'DEFLATE' });
+}
+
+function downloadBlob(blob, filename) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -1207,330 +915,326 @@ async function downloadODS(content, filename) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-// ===== Import ODS =====
-async function importODS(file) {
+async function exportAllToZip() {
+    if (typeof JSZip === 'undefined') {
+        showToast('JSZip est introuvable : ajoutez jszip.min.js à côté de index.html', 'error');
+        return;
+    }
     try {
-        // Charger le fichier ODS comme un ZIP
-        const zip = await JSZip.loadAsync(file);
+        const [entreprises, emplois] = await Promise.all([getAllFromStore('entreprises'), getAllFromStore('emplois')]);
+        if (!emplois.length) { showToast('Aucune donnée à exporter', 'error'); return; }
+        showToast('Export en cours…');
 
-        // Extraire content.xml du ZIP
-        const contentFile = zip.file('content.xml');
-        if (!contentFile) {
-            showToast('Fichier ODS invalide', 'error');
-            return;
-        }
-        const contentXml = await contentFile.async('string');
+        const root = new JSZip();
+        const usedFolders = new Set();
+        let count = 0;
 
-        // Parser le XML
-        const parser = new DOMParser();
-        const doc = parser.parseFromString(contentXml, 'text/xml');
-
-        // Extract data from sheets
-        const tables = doc.querySelectorAll('table\\:table, table');
-
-        if (tables.length === 0) {
-            showToast('Format de fichier invalide', 'error');
-            return;
-        }
-
-        // Find info sheet
-        let entrepriseNom = '';
-        let entrepriseAdresse = '';
-        let emploiPoste = '';
-        let emploiCdi = false;
-        let emploiDateDebut = '';
-        let emploiDateFin = '';
-        let emploiTrajet = 0;
-        let emploiPauseRemuneree = false;
-
-        tables.forEach(table => {
-            const tableName = table.getAttribute('table:name') || '';
-
-            if (tableName === 'Informations') {
-                const rows = table.querySelectorAll('table\\:table-row, table-row');
-                rows.forEach(row => {
-                    const cells = row.querySelectorAll('table\\:table-cell, table-cell');
-                    if (cells.length >= 2) {
-                        const labelEl = cells[0].querySelector('text\\:p, p');
-                        const valueEl = cells[1].querySelector('text\\:p, p');
-                        const label = labelEl ? labelEl.textContent.trim() : cells[0].textContent.trim();
-                        const value = valueEl ? valueEl.textContent.trim() : cells[1].textContent.trim();
-
-                        switch (label) {
-                            case 'Entreprise': entrepriseNom = value; break;
-                            case 'Adresse': entrepriseAdresse = value; break;
-                            case 'Poste': emploiPoste = value; break;
-                            case 'Type de contrat': emploiCdi = value === 'CDI'; break;
-                            case 'Date de début': emploiDateDebut = parseImportDate(value); break;
-                            case 'Date de fin': emploiDateFin = parseImportDate(value); break;
-                            case 'Temps de trajet': emploiTrajet = parseInt(value) || 0; break;
-                            case 'Pause rémunérée': emploiPauseRemuneree = value === 'Oui'; break;
-                        }
-                    }
-                });
-            }
-        });
-
-        if (!entrepriseNom || !emploiPoste) {
-            showToast('Données incomplètes dans le fichier', 'error');
-            return;
-        }
-
-        // Find or create entreprise
-        const entreprises = await getAllFromStore('entreprises');
-        let entreprise = entreprises.find(e => e.nom === entrepriseNom && e.adresse === entrepriseAdresse);
-
-        if (!entreprise) {
-            const id = await addToStore('entreprises', {
-                nom: entrepriseNom,
-                adresse: entrepriseAdresse,
-                lastActivity: new Date().toISOString()
-            });
-            entreprise = await getByKey('entreprises', id);
-        }
-
-        // Collecter les heures manuelles avant de créer l'emploi
-        const heuresManuelles = {};
-
-        // Import heures from monthly sheets
-        let heuresImported = 0;
-        const heuresDetaillees = [];
-
-        for (const table of tables) {
-            const tableName = table.getAttribute('table:name') || '';
-
-            if (tableName !== 'Informations') {
-                const rows = table.querySelectorAll('table\\:table-row, table-row');
-
-                // Vérifier si c'est un mois avec heures manuelles
-                let isManuel = false;
-                let manuelHeures = 0;
-                let monthKey = '';
-
-                // Parser le nom de la feuille pour extraire le mois
-                // Accepte: "janvier 2020", "janvier_2020", "janvier 2020 (Manuel)", "janvier_2020 (Manuel)"
-                const cleanTableName = tableName.replace(/\s*\(Manuel\)\s*$/, '').trim();
-                const monthMatch = cleanTableName.match(/^([a-zA-ZéèêëàâäùûüïîôöçÉÈÊËÀÂÄÙÛÜÏÎÔÖÇ]+)[\s_]+(\d{4})$/);
-
-                if (monthMatch) {
-                  const monthNames = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 
-                                    'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
-                  const monthIndex = monthNames.indexOf(monthMatch[1].toLowerCase());
-                  if (monthIndex !== -1) {
-                     monthKey = `${monthMatch[2]}-${(monthIndex + 1).toString().padStart(2, '0')}`;
-                    }
-                }
-
-
-                for (let index = 0; index < rows.length; index++) {
-                    const row = rows[index];
-                    const cells = row.querySelectorAll('table\\:table-cell, table-cell');
-
-                    // Gérer les cellules répétées
-                    const cellValues = [];
-                    cells.forEach(cell => {
-                        const repeated = parseInt(cell.getAttribute('table:number-columns-repeated')) || 1;
-                        const textEl = cell.querySelector('text\\:p, p');
-                        const value = textEl ? textEl.textContent.trim() : cell.textContent.trim();
-                        for (let i = 0; i < repeated && cellValues.length < 10; i++) {
-                            cellValues.push(value);
-                        }
-                    });
-
-                    // Détecter les heures manuelles
-                    if (cellValues[0] === 'Type de saisie' && cellValues[1] === 'Heures manuelles') {
-                        isManuel = true;
-                        continue;
-                    }
-
-                    // Récupérer la valeur des heures manuelles (nouveau format: heures décimales)
-                    if (isManuel && cellValues[0] === 'Total du mois (heures)') {
-                        manuelHeures = parseFloat(cellValues[1]) || 0;
-                        continue;
-                    }
-                    
-                    // Rétrocompatibilité avec ancien format (minutes)
-                    if (isManuel && cellValues[0] === 'Total du mois (minutes)') {
-                        const minutes = parseInt(cellValues[1]) || 0;
-                        manuelHeures = minutes / 60;
-                        continue;
-                    }
-
-                    // Si ce n'est pas manuel, importer les heures détaillées
-                    if (!isManuel && index > 0 && cellValues.length >= 6) {
-                        const dateStr = parseImportDate(cellValues[0]);
-                        const repos = cellValues[2] === 'Oui';
-                        const debut = cellValues[3];
-                        const fin = cellValues[4];
-                        const pause = cellValues[5];
-
-                        if (dateStr && !cellValues[0].includes('Total')) {
-                            heuresDetaillees.push({
-                                date: dateStr,
-                                repos: repos,
-                                debut: debut,
-                                fin: fin,
-                                pause: pause || '00:00'
-                            });
-                            heuresImported++;
-                        }
-                    }
-                }
-
-                // Enregistrer les heures manuelles pour ce mois (convertir heures en minutes pour stockage)
-                if (isManuel && monthKey && manuelHeures > 0) {
-                    heuresManuelles[monthKey] = manuelHeures;
-                    console.log(`Import mois manuel: ${monthKey} = ${manuelHeures}h`);
-                }
+        for (const entreprise of [...entreprises].sort((a, b) => a.nom.localeCompare(b.nom))) {
+            const emps = emplois.filter(e => e.entrepriseId === entreprise.id)
+                .sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''));
+            if (!emps.length) continue;
+            const folder = root.folder(uniqueName(sanitizeFilename(entreprise.nom), usedFolders));
+            const usedFiles = new Set();
+            for (const emploi of emps) {
+                const heures = await getByIndex('heures', 'emploiId', emploi.id);
+                const bytes = await buildODS(entreprise, emploi, heures);
+                const base = `${sanitizeFilename(emploi.poste)}_${emploi.dateDebut || 'sans-date'}_${emploi.cdi ? 'CDI' : (emploi.dateFin || 'CDD')}`;
+                folder.file(uniqueName(base, usedFiles, '.ods'), bytes, { compression: 'STORE' });
+                count++;
             }
         }
 
-        // Créer l'emploi avec les heures manuelles
-        const emploiId = await addToStore('emplois', {
-            entrepriseId: entreprise.id,
-            poste: emploiPoste,
-            dateDebut: emploiDateDebut,
-            cdi: emploiCdi,
-            dateFin: emploiDateFin || null,
-            trajet: emploiTrajet,
-            pauseRemuneree: emploiPauseRemuneree,
-            heuresManuelles: heuresManuelles,
-            lastModified: new Date().toISOString()
-        });
-
-        // Enregistrer les heures détaillées
-        for (const heure of heuresDetaillees) {
-            await addToStore('heures', {
-                emploiId: emploiId,
-                ...heure
-            });
-        }
-
-        const nbMoisManuels = Object.keys(heuresManuelles).length;
-        let message = `Import réussi: ${heuresImported} entrées`;
-        if (nbMoisManuels > 0) {
-            message += `, ${nbMoisManuels} mois manuels`;
-        }
-        showToast(message, 'success');
-
-        // Rafraîchir l'affichage
-        if (typeof loadEntreprises === 'function') {
-            await loadEntreprises();
-        }
-
+        const blob = await root.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+        downloadBlob(blob, `MesZeuR_${todayISO()}.zip`);
+        showToast(`Export terminé : ${count} fichier(s) dans un ZIP`, 'success');
     } catch (error) {
-        console.error('Erreur import ODS:', error);
-        showToast('Erreur lors de l\'import: ' + error.message, 'error');
+        showToast("Erreur lors de l'export", 'error');
+        console.error(error);
     }
 }
 
-function parseImportDate(dateStr) {
-    if (!dateStr) return '';
-    
-    // Try DD/MM/YYYY format
-    const parts = dateStr.split('/');
-    if (parts.length === 3) {
-        return `${parts[2]}-${parts[1].padStart(2, '0')}-${parts[0].padStart(2, '0')}`;
-    }
-    
-    // Try YYYY-MM-DD format
-    if (dateStr.match(/^\d{4}-\d{2}-\d{2}$/)) {
-        return dateStr;
-    }
-    
-    return '';
+// ===== Import : ZIP ou fichiers .ods =====
+function normalizeTime(s) {
+    const m = String(s || '').match(/(\d{1,2})\s*[:hH]\s*(\d{2})/);
+    return m ? `${pad(Number(m[1]))}:${m[2]}` : '';
 }
 
-// ===== Utility Functions =====
+function parseImportDate(s) {
+    s = String(s || '').trim();
+    let m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+    if (m) return `${m[3]}-${pad(Number(m[2]))}-${pad(Number(m[1]))}`;
+    m = s.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    return m ? `${m[1]}-${m[2]}-${m[3]}` : '';
+}
+
+const stripAccents = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+// "juillet_2023", "juillet 2023", "juillet_2023 (Manuel)" -> "2023-07"
+function parseMonthSheetName(name) {
+    const clean = name.replace(/\s*\(manuel\)\s*$/i, '').trim();
+    const m = clean.match(/^([A-Za-zÀ-ÿ]+)[\s_]+(\d{4})$/);
+    if (!m) return '';
+    const idx = MOIS.findIndex(x => stripAccents(x) === stripAccents(m[1]));
+    return idx === -1 ? '' : `${m[2]}-${pad(idx + 1)}`;
+}
+
+// Valeur d'une cellule ODS (tolère les cellules réenregistrées par Excel : dates, heures, nombres).
+function cellValue(cell) {
+    const attr = n => cell.getAttributeNS(NS.office, n);
+    const type = attr('value-type');
+    if (type === 'float' || type === 'percentage' || type === 'currency') {
+        const v = attr('value');
+        if (v) return v;
+    }
+    if (type === 'date') {
+        const v = attr('date-value');
+        if (v) return v.slice(0, 10);
+    }
+    if (type === 'time') {
+        const m = (attr('time-value') || '').match(/PT(\d+)H(\d+)M/);
+        if (m) return `${pad(Number(m[1]))}:${m[2]}`;
+    }
+    return Array.from(cell.getElementsByTagNameNS(NS.text, 'p')).map(p => p.textContent).join(' ').trim();
+}
+
+function readSheetRows(tableEl) {
+    const rows = [];
+    for (const rowEl of tableEl.getElementsByTagNameNS(NS.table, 'table-row')) {
+        const cells = [];
+        for (const cell of rowEl.children) {
+            if (cell.namespaceURI !== NS.table || !/table-cell$/.test(cell.localName)) continue;
+            const rep = parseInt(cell.getAttributeNS(NS.table, 'number-columns-repeated')) || 1;
+            const val = cellValue(cell);
+            for (let i = 0; i < rep && cells.length < 20; i++) cells.push(val);
+        }
+        if (cells.some(c => c !== '')) rows.push(cells);
+    }
+    return rows;
+}
+
+// Importe un fichier .ods (emploi + heures). Fusion sans suppression : mêmes dates / mêmes mois mis à jour.
+async function importOdsData(data) {
+    const zip = await JSZip.loadAsync(data);
+    const contentFile = zip.file('content.xml');
+    if (!contentFile) throw new Error('content.xml introuvable');
+    const doc = new DOMParser().parseFromString(await contentFile.async('string'), 'application/xml');
+    if (doc.getElementsByTagName('parsererror').length) throw new Error('XML invalide');
+
+    const info = {}, manual = {}, days = new Map();
+    for (const table of doc.getElementsByTagNameNS(NS.table, 'table')) {
+        const name = table.getAttributeNS(NS.table, 'name') || '';
+        const rows = readSheetRows(table);
+
+        if (name === 'Informations') {
+            rows.forEach(r => { if (r.length >= 2) info[r[0]] = r[1]; });
+            continue;
+        }
+        if (rows.some(r => r[0] === 'Type de saisie' && r[1] === 'Heures manuelles')) {
+            const mk = parseMonthSheetName(name);
+            const hRow = rows.find(r => /^Total du mois \(heures/i.test(r[0]));
+            const mRow = rows.find(r => /^Total du mois \(minutes/i.test(r[0]));   // anciens exports
+            let value = NaN;
+            if (hRow) value = parseDecimal(hRow[1]);
+            else if (mRow) value = parseDecimal(mRow[1]) / 60;
+            if (mk && !isNaN(value)) manual[mk] = round2(value);
+            continue;
+        }
+        rows.forEach(r => {
+            const date = parseImportDate(r[0]);
+            if (!date) return;   // en-tête, ligne de total…
+            const repos = r[2] === 'Oui';
+            const debut = normalizeTime(r[3]);
+            const fin = normalizeTime(r[4]);
+            if (!repos && !debut && !fin) return;   // jour vide
+            days.set(date, { date, repos, debut, fin, pause: normalizeTime(r[5]) || '00:00' });
+        });
+    }
+
+    const nom = (info['Entreprise'] || '').trim();
+    const poste = (info['Poste'] || '').trim();
+    const dateDebut = parseImportDate(info['Date de début']);
+    if (!nom || !poste || !dateDebut) throw new Error('Informations manquantes');
+    const adresse = (info['Adresse'] || '').trim();
+    const cdi = String(info['Type de contrat'] || '').toUpperCase() === 'CDI';
+    const fields = {
+        cdi,
+        dateFin: cdi ? null : (parseImportDate(info['Date de fin']) || null),
+        trajet: parseInt(info['Temps de trajet']) || 0,
+        pauseRemuneree: info['Pause rémunérée'] === 'Oui',
+        pauseDefaut: normalizeTime(info['Pause par défaut']) || DEFAULT_PAUSE
+    };
+
+    const now = new Date().toISOString();
+    const norm = s => (s || '').trim().toLowerCase();
+    const entreprises = await getAllFromStore('entreprises');
+    let entreprise = entreprises.find(e => norm(e.nom) === norm(nom) && norm(e.adresse) === norm(adresse));
+    if (!entreprise) {
+        const id = await addToStore('entreprises', { nom, adresse, lastActivity: now });
+        entreprise = await getByKey('entreprises', id);
+    }
+
+    const emplois = await getByIndex('emplois', 'entrepriseId', entreprise.id);
+    let emploi = emplois.find(e => norm(e.poste) === norm(poste) && e.dateDebut === dateDebut);
+    const created = !emploi;
+    if (emploi) {
+        Object.assign(emploi, fields, { heuresManuelles: { ...(emploi.heuresManuelles || {}), ...manual }, lastModified: now });
+        await updateInStore('emplois', emploi);
+    } else {
+        emploi = { entrepriseId: entreprise.id, poste, dateDebut, ...fields, heuresManuelles: manual, lastModified: now };
+        emploi.id = await addToStore('emplois', emploi);
+    }
+
+    const existing = new Map((await getByIndex('heures', 'emploiId', emploi.id)).map(h => [h.date, h]));
+    const items = [...days.values()].map(d => {
+        const old = existing.get(d.date);
+        return { ...(old ? { id: old.id } : {}), emploiId: emploi.id, ...d };
+    });
+    if (items.length) await bulkPut('heures', items);
+
+    return { created, jours: items.length, mois: Object.keys(manual).length };
+}
+
+async function importFiles(fileList) {
+    if (typeof JSZip === 'undefined') {
+        showToast('JSZip est introuvable : ajoutez jszip.min.js à côté de index.html', 'error');
+        return;
+    }
+    const stats = { emplois: 0, jours: 0, mois: 0, erreurs: 0 };
+    const handle = async (data, label) => {
+        try {
+            const r = await importOdsData(data);
+            stats.emplois++; stats.jours += r.jours; stats.mois += r.mois;
+        } catch (error) {
+            stats.erreurs++;
+            console.error(`Import de ${label} impossible :`, error);
+        }
+    };
+
+    for (const file of fileList) {
+        if (file.name.toLowerCase().endsWith('.zip')) {
+            try {
+                const zip = await JSZip.loadAsync(file);
+                const entries = Object.values(zip.files).filter(f =>
+                    !f.dir && f.name.toLowerCase().endsWith('.ods') && !f.name.startsWith('__MACOSX'));
+                for (const entry of entries) await handle(await entry.async('uint8array'), entry.name);
+            } catch (error) {
+                stats.erreurs++;
+                console.error(`ZIP ${file.name} illisible :`, error);
+            }
+        } else {
+            await handle(file, file.name);
+        }
+    }
+
+    let msg = `Import : ${stats.emplois} emploi(s), ${stats.jours} jour(s), ${stats.mois} mois manuel(s)`;
+    if (stats.erreurs) msg += ` — ${stats.erreurs} fichier(s) en erreur (voir console)`;
+    showToast(msg, stats.erreurs ? 'error' : 'success');
+    await loadEntreprises();
+    await calculerBilanGlobal();
+}
+
+// ===== Bilan global =====
+// Conversion heures -> années/mois/jours (base 35 h/semaine, 52 semaines, 7 h/jour).
+function convertirMinutesEnDuree(totalMinutes) {
+    const heuresParAn = 35 * 52;
+    const heuresParMois = heuresParAn / 12;
+    const heuresParJour = 7;
+    const totalHeures = totalMinutes / 60;
+    const annees = Math.floor(totalHeures / heuresParAn);
+    const reste = totalHeures % heuresParAn;
+    const mois = Math.floor(reste / heuresParMois);
+    const jours = Math.floor((reste % heuresParMois) / heuresParJour);
+    return { annees, mois, jours };
+}
+
+async function calculerBilanGlobal() {
+    const [emplois, entreprises] = await Promise.all([getAllFromStore('emplois'), getAllFromStore('entreprises')]);
+    elements.bilanEmploisList.innerHTML = '';
+    let totalGlobal = 0;
+
+    const sorted = [...emplois].sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''));
+    for (const emploi of sorted) {
+        const list = await getByIndex('heures', 'emploiId', emploi.id);
+        const per = computePerMonth(emploi, new Map(list.map(h => [h.date, h])));
+        const total = Object.values(per).reduce((a, b) => a + b, 0);
+        totalGlobal += total;
+        if (total <= 0) continue;
+
+        const entreprise = entreprises.find(e => e.id === emploi.entrepriseId);
+        const item = document.createElement('div');
+        item.className = 'bilan-emploi-item';
+        item.innerHTML = `<span class="bilan-emploi-nom">${escapeHtml(entreprise ? `${entreprise.nom} - ${emploi.poste}` : emploi.poste)}</span>
+            <span class="bilan-emploi-heures">${minutesToTime(total)}</span>`;
+        elements.bilanEmploisList.appendChild(item);
+    }
+    if (!elements.bilanEmploisList.children.length) {
+        elements.bilanEmploisList.innerHTML = '<p class="settings-description">Aucune heure enregistrée</p>';
+    }
+    elements.bilanTotalHeures.textContent = minutesToTime(totalGlobal);
+    const d = convertirMinutesEnDuree(totalGlobal);
+    elements.bilanTotalDuree.textContent = `${d.annees} année(s), ${d.mois} mois, ${d.jours} jour(s)`;
+}
+
+function toggleBilanDetails() {
+    const collapsed = elements.bilanEmploisList.classList.toggle('collapsed');
+    document.querySelector('.bilan-toggle-icon').classList.toggle('open', !collapsed);
+    elements.bilanToggle.setAttribute('aria-expanded', String(!collapsed));
+}
+
+// ===== Divers : échappement, modal, toast =====
 function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
 }
 
-function escapeXml(text) {
-    return text
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&apos;');
-}
-
-function sanitizeFilename(name) {
-    return name.replace(/[^a-zA-Z0-9àâäéèêëïîôùûüÿçÀÂÄÉÈÊËÏÎÔÙÛÜŸÇ_-]/g, '_');
-}
-
-// ===== Modal =====
-let modalCallback = null;
-
-function showModal(title, message, callback) {
+function showModal(title, message, onConfirm, onCancel) {
     elements.modalTitle.textContent = title;
     elements.modalMessage.textContent = message;
-    modalCallback = callback;
-    elements.modal.classList.remove('hidden');
+    modalConfirmCallback = onConfirm;
+    modalCancelCallback = onCancel || null;
+    elements.modalConfirm.classList.remove('hidden');
 }
 
-function hideModal() {
-    elements.modal.classList.add('hidden');
-    modalCallback = null;
+function closeModal(confirmed) {
+    const cb = confirmed ? modalConfirmCallback : modalCancelCallback;
+    modalConfirmCallback = null;
+    modalCancelCallback = null;
+    elements.modalConfirm.classList.add('hidden');
+    if (cb) cb();
 }
-
-// ===== Toast =====
-let toastTimeout = null;
 
 function showToast(message, type = '') {
-    if (toastTimeout) {
-        clearTimeout(toastTimeout);
-    }
-    
+    clearTimeout(toastTimeout);
     elements.toast.textContent = message;
-    elements.toast.className = 'toast';
-    if (type) {
-        elements.toast.classList.add(type);
-    }
-    
-    toastTimeout = setTimeout(() => {
-        elements.toast.classList.add('hidden');
-    }, 3000);
+    elements.toast.className = 'toast' + (type ? ` ${type}` : '');
+    toastTimeout = setTimeout(() => elements.toast.classList.add('hidden'), 3500);
 }
 
-// ===== Event Listeners =====
+// ===== Événements =====
 function initEventListeners() {
-    // Navigation
     elements.btnBack.addEventListener('click', navigateBack);
     elements.btnSettings.addEventListener('click', () => {
         showPage('page-settings', 'Paramètres');
         calculerBilanGlobal();
     });
-
-    // Home
-    elements.btnTravail.addEventListener('click', () => {
-        showPage('page-entreprises', 'Mes Entreprises');
-        loadEntreprises();
-    });
+    elements.btnTravail.addEventListener('click', goToEntreprises);
 
     // Entreprises
     elements.btnAddEntreprise.addEventListener('click', () => openFormEntreprise());
     elements.formEntreprise.addEventListener('submit', saveEntreprise);
-    elements.btnCancelEntreprise.addEventListener('click', () => {
-        showPage('page-entreprises', 'Mes Entreprises');
-        loadEntreprises();
-    });
+    elements.btnCancelEntreprise.addEventListener('click', goToEntreprises);
 
     // Emplois
     elements.btnEditEntreprise.addEventListener('click', () => openFormEntreprise(currentEntreprise));
     elements.btnDeleteEntreprise.addEventListener('click', deleteEntreprise);
     elements.btnAddEmploi.addEventListener('click', () => openFormEmploi());
     elements.formEmploi.addEventListener('submit', saveEmploi);
-    elements.emploiCdi.addEventListener('change', updateDateFinVisibility);
-    elements.btnCancelEmploi.addEventListener('click', () => {
-        showPage('page-emplois', currentEntreprise.nom);
-        loadEmplois(currentEntreprise.id);
-    });
+    elements.emploiCdd.addEventListener('change', updateDateFinVisibility);
+    elements.btnCancelEmploi.addEventListener('click', goToEmplois);
 
     // Heures
     elements.btnEditEmploi.addEventListener('click', () => openFormEmploi(currentEmploi));
@@ -1539,303 +1243,94 @@ function initEventListeners() {
     elements.btnNextWeek.addEventListener('click', () => navigateWeek(1));
     elements.btnSaveHeures.addEventListener('click', saveHeures);
 
-    // Week picker - clic sur la date pour ouvrir le sélecteur
+    // Saisie dans le tableau (délégation : fonctionne après chaque rafraîchissement)
+    const isTimeInput = el => el.matches('.input-pause, .input-debut, .input-fin');
+    elements.heuresTable.addEventListener('input', e => { if (isTimeInput(e.target)) refreshTotals(); });
+    elements.heuresTable.addEventListener('change', e => {
+        if (e.target.classList.contains('repos-checkbox')) handleReposChange(e);
+        else if (isTimeInput(e.target)) refreshTotals();
+    });
+
+    // Sélecteur de semaine
     elements.weekLabel.addEventListener('click', () => {
-        if (!currentEmploi) return;
+        if (!currentWeekStart) return;
         elements.weekDatePicker.value = formatDateISO(currentWeekStart);
-        
-        // Définir les limites selon le contrat
-        elements.weekDatePicker.min = currentEmploi.dateDebut;
-        if (!currentEmploi.cdi && currentEmploi.dateFin) {
-            elements.weekDatePicker.max = currentEmploi.dateFin;
-        } else {
-            elements.weekDatePicker.removeAttribute('max');
-        }
-        
         elements.weekPickerModal.classList.remove('hidden');
     });
-
-    // Week picker - validation
     elements.weekPickerOk.addEventListener('click', async () => {
-        const selectedDate = elements.weekDatePicker.value;
-        if (selectedDate) {
-            currentWeekStart = getMonday(new Date(selectedDate));
+        const v = elements.weekDatePicker.value;
+        elements.weekPickerModal.classList.add('hidden');
+        if (v) {
+            currentWeekStart = getMonday(parseISO(v));
             await renderWeekTable();
         }
-        elements.weekPickerModal.classList.add('hidden');
     });
-
-    // Week picker - fermer en cliquant ailleurs
-    document.addEventListener('click', (e) => {
+    document.addEventListener('click', e => {
         if (!elements.weekPickerModal.contains(e.target) && e.target !== elements.weekLabel) {
             elements.weekPickerModal.classList.add('hidden');
         }
     });
 
-// Heures manuelles - checkbox toggle
-elements.heuresManuellesCheck.addEventListener('change', async function() {
-    const isChecked = this.checked;
-    const currentMonth = currentWeekStart.getMonth();
-    const currentYear = currentWeekStart.getFullYear();
-    const monthKey = `${currentYear}-${(currentMonth + 1).toString().padStart(2, '0')}`;
-    
-    if (isChecked) {
-        elements.heuresManuellesInput.classList.remove('hidden');
-        
-        // Griser les inputs du mois
-        document.querySelectorAll('.heures-table input[type="time"]').forEach(input => {
-            const dateStr = input.dataset.date;
-            if (dateStr) {
-                const inputDate = new Date(dateStr);
-                if (inputDate.getMonth() === currentMonth && inputDate.getFullYear() === currentYear) {
-                    input.disabled = true;
-                    input.classList.add('disabled-manuel');
-                }
-            }
-        });
-        
-    } else {
-        // DÉCOCHAGE : Supprimer les heures manuelles ET SAUVEGARDER
-        elements.heuresManuellesInput.classList.add('hidden');
-        elements.heuresManuellesValue.value = '';
-        
-        // Supprimer de l'objet
-        if (currentEmploi.heuresManuelles && currentEmploi.heuresManuelles[monthKey] !== undefined) {
-            delete currentEmploi.heuresManuelles[monthKey];
-            
-            // SAUVEGARDER EN BASE
-            await updateInStore('emplois', currentEmploi);
-            
-            showToast('Heures manuelles supprimées');
-        }
-        
-        // Dégrisser les inputs du mois
-        document.querySelectorAll('.heures-table input[type="time"]').forEach(input => {
-            const dateStr = input.dataset.date;
-            if (dateStr) {
-                const inputDate = new Date(dateStr);
-                if (inputDate.getMonth() === currentMonth && inputDate.getFullYear() === currentYear) {
-                    input.disabled = false;
-                    input.classList.remove('disabled-manuel');
-                }
-            }
-        });
-        
-        // Recalculer les totaux
-        await calculateMonthlyAndYearlyTotals();
-    }
-});
-
-    // Heures manuelles - sauvegarde
-    elements.btnSaveHeuresManuelles.addEventListener('click', async () => {
-        if (!currentEmploi || !currentWeekStart) return;
-
-        const heures = parseFloat(elements.heuresManuellesValue.value);
-        if (isNaN(heures) || heures < 0) {
-            showToast('Veuillez entrer un nombre d\'heures valide', 'error');
-            return;
-        }
-
-        const monthKey = `${currentWeekStart.getFullYear()}-${(currentWeekStart.getMonth() + 1).toString().padStart(2, '0')}`;
-
-        const heuresManuelles = currentEmploi.heuresManuelles || {};
-        heuresManuelles[monthKey] = heures;
-
-        await updateInStore('emplois', {
-            ...currentEmploi,
-            heuresManuelles
-        });
-
-        currentEmploi.heuresManuelles = heuresManuelles;
-
-        showToast('Heures mensuelles enregistrées', 'success');
-        await calculateMonthlyAndYearlyTotals();
+    // Saisie manuelle
+    elements.heuresManuellesCheck.addEventListener('change', onManualCheckChange);
+    elements.btnSaveHeuresManuelles.addEventListener('click', onManualSave);
+    elements.heuresManuellesMoisSelect.addEventListener('change', () => {
+        currentMonthKey = elements.heuresManuellesMoisSelect.value;
+        updateManualPanel();
+        applyDayStates();
+        refreshTotals();
     });
 
-    // Settings
-    elements.btnExportAll.addEventListener('click', exportAllToODS);
-    elements.inputImport.addEventListener('change', (e) => {
-        if (e.target.files.length > 0) {
-            importODS(e.target.files[0]);
-            e.target.value = '';
-        }
+    // Paramètres
+    elements.btnExportAll.addEventListener('click', exportAllToZip);
+    elements.inputImport.addEventListener('change', async e => {
+        const files = Array.from(e.target.files);
+        e.target.value = '';
+        if (files.length) await importFiles(files);
     });
+    elements.bilanToggle.addEventListener('click', toggleBilanDetails);
 
     // Modal
-    elements.modalCancel.addEventListener('click', hideModal);
-    elements.modalConfirmBtn.addEventListener('click', () => {
-        if (modalCallback) {
-            modalCallback();
-        }
-        hideModal();
-    });
-    elements.modal.addEventListener('click', (e) => {
-        if (e.target === elements.modal) {
-            hideModal();
-        }
-    });
+    elements.modalCancel.addEventListener('click', () => closeModal(false));
+    elements.modalConfirmBtn.addEventListener('click', () => closeModal(true));
+    elements.modalConfirm.addEventListener('click', e => { if (e.target === elements.modalConfirm) closeModal(false); });
 
-    // Keyboard shortcuts
-    document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape') {
-            if (!elements.modal.classList.contains('hidden')) {
-                hideModal();
-            } else if (!elements.weekPickerModal.classList.contains('hidden')) {
-                elements.weekPickerModal.classList.add('hidden');
-            } else {
-                navigateBack();
-            }
-        }
+    document.addEventListener('keydown', e => {
+        if (e.key !== 'Escape') return;
+        if (!elements.modalConfirm.classList.contains('hidden')) closeModal(false);
+        else if (!elements.weekPickerModal.classList.contains('hidden')) elements.weekPickerModal.classList.add('hidden');
+        else navigateBack();
     });
 }
 
-    // ===== Service Worker Registration =====
-    async function registerServiceWorker() {
-    if ('serviceWorker' in navigator) {
-        try {
-            const registration = await navigator.serviceWorker.register('sw.js');
-            console.log('Service Worker registered:', registration.scope);
-        } catch (error) {
-            console.error('Service Worker registration failed:', error);
-        }
+// ===== Service Worker =====
+async function registerServiceWorker() {
+    if (!('serviceWorker' in navigator) || location.protocol === 'file:') return;
+    try {
+        // La version dans l'URL change le nom du cache : une nouvelle version de l'app met à jour les fichiers.
+        await navigator.serviceWorker.register(`sw.js?v=${APP_VERSION}`);
+    } catch (error) {
+        console.error('Service Worker registration failed:', error);
     }
 }
 
-// ========================================
-// BILAN GLOBAL
-// ========================================
-
-// Convertir minutes en années/mois/jours (base: 35h/semaine, 52 semaines)
-function convertirMinutesEnDuree(totalMinutes) {
-    const heuresParAn = 35 * 52; // 1820 heures par an
-    const heuresParMois = heuresParAn / 12; // ~151.67 heures par mois
-    const heuresParJour = 7; // 7 heures par jour
-    
-    const totalHeures = totalMinutes / 60;
-    
-    const annees = Math.floor(totalHeures / heuresParAn);
-    const resteApresAnnees = totalHeures % heuresParAn;
-    
-    const mois = Math.floor(resteApresAnnees / heuresParMois);
-    const resteApresMois = resteApresAnnees % heuresParMois;
-    
-    const jours = Math.floor(resteApresMois / heuresParJour);
-    
-    return { annees, mois, jours };
-}
-
-// Calculer le bilan global
-async function calculerBilanGlobal() {
-    const bilanList = document.getElementById('bilan-emplois-list');
-    const bilanTotalHeures = document.getElementById('bilan-total-heures');
-    const bilanTotalDuree = document.getElementById('bilan-total-duree');
-
-    if (!bilanList) return;
-
-    bilanList.innerHTML = '';
-    let totalMinutesGlobal = 0;
-
-    // Récupérer tous les emplois et entreprises
-    const emplois = await getAllFromStore('emplois');
-    const allEntreprises = await getAllFromStore('entreprises');
-
-    // Parcourir tous les emplois
-    for (const emploi of emplois) {
-        let totalMinutesEmploi = 0;
-
-        // 1. Récupérer les heures du store 'heures' (saisie quotidienne)
-        const heuresEmploi = await getByIndex('heures', 'emploiId', emploi.id);
-
-        heuresEmploi.forEach(h => {
-            if (h && !h.repos && h.debut && h.fin) {
-                const debut = timeToMinutes(h.debut);
-                const fin = timeToMinutes(h.fin);
-                const pause = timeToMinutes(h.pause || '00:00');
-
-                if (fin > debut) {
-                    totalMinutesEmploi += (fin - debut) - pause;
-                }
-            }
-        });
-
-        // 2. Ajouter les heures manuelles stockées dans l'emploi
-        if (emploi.heuresManuelles && typeof emploi.heuresManuelles === 'object') {
-            Object.values(emploi.heuresManuelles).forEach(heuresDecimales => {
-                const minutes = Math.round(parseFloat(heuresDecimales) * 60);
-                totalMinutesEmploi += minutes;
-            });
-        }
-
-        // Récupérer l'entreprise pour afficher son nom avec l'emploi
-        const entreprise = allEntreprises.find(e => e.id === emploi.entrepriseId);
-        const nomComplet = entreprise ? `${entreprise.nom} - ${emploi.poste}` : emploi.poste;
-
-        if (totalMinutesEmploi > 0) {
-            const heures = Math.floor(totalMinutesEmploi / 60);
-            const mins = totalMinutesEmploi % 60;
-
-            const itemDiv = document.createElement('div');
-            itemDiv.className = 'bilan-emploi-item';
-            itemDiv.innerHTML = `
-                <span class="bilan-emploi-nom">${nomComplet}</span>
-                <span class="bilan-emploi-heures">${heures}H${mins.toString().padStart(2, '0')}</span>
-            `;
-            bilanList.appendChild(itemDiv);
-        }
-
-        totalMinutesGlobal += totalMinutesEmploi;
-    }
-
-    // Si aucun emploi avec des heures
-    if (bilanList.children.length === 0) {
-        bilanList.innerHTML = '<p style="color: var(--text-secondary); text-align: center;">Aucune heure enregistrée</p>';
-    }
-
-    // Afficher le total
-    const totalHeures = Math.floor(totalMinutesGlobal / 60);
-    const totalMins = totalMinutesGlobal % 60;
-    bilanTotalHeures.textContent = `${totalHeures}H${totalMins.toString().padStart(2, '0')}`;
-
-    // Convertir en années/mois/jours
-    const duree = convertirMinutesEnDuree(totalMinutesGlobal);
-    bilanTotalDuree.textContent = `${duree.annees} année(s), ${duree.mois} mois, ${duree.jours} jour(s)`;
-}
-
-// Toggle pour afficher/masquer le détail du bilan
-function toggleBilanDetails() {
-    const list = document.getElementById('bilan-emplois-list');
-    const icon = document.querySelector('.bilan-toggle-icon');
-    
-    if (list.classList.contains('collapsed')) {
-        list.classList.remove('collapsed');
-        icon.classList.add('open');
-    } else {
-        list.classList.add('collapsed');
-        icon.classList.remove('open');
-    }
-}
-
-// ===== App Initialization =====
+// ===== Démarrage =====
 async function initApp() {
     try {
         await initDB();
+        if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+        elements.appVersion.textContent = APP_VERSION;
         initEventListeners();
         await registerServiceWorker();
-        
-        // Show home page
-        showPage('page-home');
-        
+
+        if (new URLSearchParams(location.search).get('action') === 'travail') await goToEntreprises();
+        else showPage('page-home');
         console.log(`MesZeuR v${APP_VERSION} initialized`);
     } catch (error) {
         console.error('App initialization failed:', error);
-        showToast('Erreur d\'initialisation', 'error');
+        showToast("Erreur d'initialisation", 'error');
     }
 }
 
-// Start app when DOM is ready
-if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initApp);
-} else {
-    initApp();
-}
-
+if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initApp);
+else initApp();

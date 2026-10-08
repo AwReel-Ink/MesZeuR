@@ -2,27 +2,15 @@
     "name": "MesZeuR - Suivi des heures de travail",
     "short_name": "MesZeuR",
     "description": "Application de suivi des heures de travail quotidiennes",
-    "version": "1.4.2",
-    "start_url": "/MesZeuR/",
+    "start_url": "./",
+    "scope": "./",
     "display": "standalone",
     "background_color": "#ecf0f1",
     "theme_color": "#2c3e50",
-    "orientation": "portrait-primary",
-    "scope": "/MesZeuR/",
     "lang": "fr-FR",
     "icons": [
-        {
-            "src": "/MesZeuR/icon192x192.png",
-            "sizes": "192x192",
-            "type": "image/png",
-            "purpose": "any maskable"
-        },
-        {
-            "src": "/MesZeuR/icon512x512.png",
-            "sizes": "512x512",
-            "type": "image/png",
-            "purpose": "any maskable"
-        }
+        { "src": "icon192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+        { "src": "icon512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" }
     ],
     "categories": ["productivity", "utilities"],
     "shortcuts": [
@@ -30,23 +18,8 @@
             "name": "Travail",
             "short_name": "Travail",
             "description": "Accéder à mes entreprises",
-            "url": "/MesZeuR/?action=travail",
-            "icons": [
-                {
-                    "src": "/MesZeuR/icon192x192.png",
-                    "sizes": "192x192"
-                }
-            ]
+            "url": "./?action=travail",
+            "icons": [{ "src": "icon192x192.png", "sizes": "192x192" }]
         }
     ]
 }
-
-
-
-
-
-
-
-
-
-
