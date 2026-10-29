@@ -15,6 +15,13 @@
     "categories": ["productivity", "utilities"],
     "shortcuts": [
         {
+            "name": "Pointer (arrivée / départ)",
+            "short_name": "Pointer",
+            "description": "Enregistrer l'heure d'arrivée ou de départ",
+            "url": "./?action=pointer",
+            "icons": [{ "src": "icon192x192.png", "sizes": "192x192" }]
+        },
+        {
             "name": "Travail",
             "short_name": "Travail",
             "description": "Accéder à mes entreprises",

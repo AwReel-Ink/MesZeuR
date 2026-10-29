@@ -1,9 +1,9 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const APP_VERSION = '1.5.0';
+const APP_VERSION = '1.6.0';
 const DB_NAME = 'MesZeuRDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2;   // v2 : ajout du journal des pointages
 const DEFAULT_PAUSE = '00:30';
 
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -27,6 +27,7 @@ let renderToken = 0;
 let modalConfirmCallback = null;
 let modalCancelCallback = null;
 let toastTimeout = null;
+let emploiFormContext = { from: 'classic', date: null };   // d'où vient le formulaire emploi (tableau ou agenda)
 
 // ===== Éléments du DOM (id "mon-id" -> elements.monId) =====
 const elements = {};
@@ -39,6 +40,8 @@ const elements = {};
     'emplois-entreprise-nom', 'emplois-entreprise-adresse', 'btn-edit-entreprise', 'btn-delete-entreprise', 'btn-add-emploi', 'liste-emplois',
     'form-emploi', 'form-emploi-title', 'emploi-id', 'emploi-entreprise-id', 'emploi-poste', 'emploi-date-debut', 'emploi-cdd',
     'group-date-fin', 'emploi-date-fin', 'emploi-trajet', 'emploi-pause-remuneree', 'emploi-pause-heures', 'emploi-pause-minutes', 'btn-cancel-emploi',
+    'group-emploi-entreprise', 'emploi-entreprise-select', 'group-new-entreprise', 'emploi-new-entreprise-nom', 'emploi-new-entreprise-adresse',
+    'horaires-grid', 'btn-copy-lundi', 'postes-list',
     'heures-emploi-poste', 'heures-emploi-contrat', 'btn-edit-emploi', 'btn-delete-emploi',
     'btn-prev-week', 'btn-next-week', 'week-label', 'week-picker-modal', 'week-date-picker', 'week-picker-ok',
     'heures-table', 'row-dates', 'row-repos', 'row-jours', 'row-pause', 'row-debut', 'row-fin', 'row-total-jour', 'total-semaine',
@@ -46,7 +49,8 @@ const elements = {};
     'heures-manuelles-value', 'btn-save-heures-manuelles',
     'total-mois', 'total-annee', 'temps-reel', 'temps-reel-trajet', 'cumul-total-emploi', 'btn-save-heures',
     'btn-export-all', 'input-import', 'bilan-toggle', 'bilan-emplois-list', 'bilan-total-heures', 'bilan-total-duree', 'app-version',
-    'modal-confirm', 'modal-title', 'modal-message', 'modal-cancel', 'modal-confirm-btn', 'toast'
+    'modal-confirm', 'modal-title', 'modal-message', 'modal-cancel', 'modal-confirm-btn', 'toast',
+    'page-agenda', 'affichage-tableau', 'affichage-agenda'
 ].forEach(id => {
     elements[id.replace(/-([a-z])/g, (_, c) => c.toUpperCase())] = document.getElementById(id);
 });
@@ -159,7 +163,12 @@ function initDB() {
                 s.createIndex('date', 'date', { unique: false });
                 s.createIndex('emploiId_date', ['emploiId', 'date'], { unique: true });
             }
+            if (!database.objectStoreNames.contains('pointages')) {
+                const s = database.createObjectStore('pointages', { keyPath: 'id', autoIncrement: true });
+                s.createIndex('ts', 'ts', { unique: false });
+            }
         };
+        request.onblocked = () => showToast("Fermez les autres fenêtres de MesZeuR pour terminer la mise à jour", 'error');
     });
 }
 
@@ -191,6 +200,89 @@ function bulkPut(storeName, items) {
     });
 }
 
+// Écrit (ou supprime si vide) une journée. Partagé par l'agenda et le pointage.
+async function saveDayRecord(rec) {
+    const data = { ...rec };
+    if (!data.repos && !data.debut && !data.fin) {
+        if (data.id) await deleteFromStore('heures', data.id);
+        return null;
+    }
+    if (data.estime && !Object.values(data.estime).some(Boolean)) delete data.estime;
+    if (data.id) { await updateInStore('heures', data); return data.id; }
+    delete data.id;
+    return addToStore('heures', data);
+}
+const getDayRecord = (emploiId, date) => dbRun('heures', 'readonly', st => st.index('emploiId_date').get([emploiId, date]));
+const getHeuresBetween = (from, to) => dbRun('heures', 'readonly', st => st.index('date').getAll(IDBKeyRange.bound(from, to)));
+
+// ===== Horaires habituels (un par jour, lundi = 0) =====
+function emptyHoraires() {
+    return JOURS_FULL.map(() => ({ travaille: false, debut: '', fin: '', pause: '' }));
+}
+// Déduit les horaires les plus fréquents de l'historique d'un emploi (emplois créés avant la v1.6).
+function deriveHoraires(heures, emploi) {
+    const res = emptyHoraires();
+    let found = false;
+    const mode = arr => {
+        const c = {};
+        arr.forEach(v => { c[v] = (c[v] || 0) + 1; });
+        return Object.entries(c).sort((a, b) => b[1] - a[1])[0]?.[0];
+    };
+    for (let i = 0; i < 7; i++) {
+        const days = heures.filter(h => !h.repos && h.debut && h.fin && (parseISO(h.date).getDay() + 6) % 7 === i);
+        if (!days.length) continue;
+        const [debut, fin] = mode(days.map(h => `${h.debut}|${h.fin}`)).split('|');
+        res[i] = { travaille: true, debut, fin, pause: mode(days.map(h => h.pause || '00:00')) };
+        found = true;
+    }
+    if (!found) return null;
+    const ref = res.find(h => h.travaille);
+    res.forEach(h => { if (!h.travaille) h.pause = ref.pause; });
+    return res;
+}
+// Horaires habituels d'un emploi, par ordre de préférence :
+// 1. ceux saisis dans l'emploi ; 2. son historique s'il est assez fourni (8 jours complets) ;
+// 3. ceux saisis dans le contrat précédent (même entreprise d'abord) ; 4. l'historique récent cumulé.
+const horairesUsable = hs => Array.isArray(hs) && hs.some(h => h.travaille && h.debut && h.fin);
+const isCompleteDay = h => !h.repos && h.debut && h.fin;
+async function inferHoraires(emploi) {
+    if (emploi && horairesUsable(emploi.horaires)) return emploi.horaires;
+    const own = emploi && emploi.id ? (await getByIndex('heures', 'emploiId', emploi.id)).filter(isCompleteDay) : [];
+    if (own.length >= 8) return deriveHoraires(own, emploi);
+
+    const others = (await getAllFromStore('emplois')).filter(e => !emploi || e.id !== emploi.id)
+        .sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || ''));
+    if (emploi) others.sort((a, b) => Number(b.entrepriseId === emploi.entrepriseId) - Number(a.entrepriseId === emploi.entrepriseId));
+    const explicit = others.find(e => horairesUsable(e.horaires));
+    if (explicit) return explicit.horaires;
+
+    const pool = [...own];
+    for (const e of others) {
+        if (pool.length >= 60) break;
+        const recs = (await getByIndex('heures', 'emploiId', e.id)).filter(isCompleteDay)
+            .sort((a, b) => b.date.localeCompare(a.date));
+        pool.push(...recs.slice(0, 60 - pool.length));
+    }
+    return pool.length ? deriveHoraires(pool, emploi) : null;
+}
+
+function emploiCovers(emploi, date) {
+    return (!emploi.dateDebut || emploi.dateDebut <= date) && (emploi.cdi || !emploi.dateFin || emploi.dateFin >= date);
+}
+// Contrat en cours le plus récent à une date (par date de début).
+function emploiForDate(emplois, date) {
+    return emplois.filter(e => emploiCovers(e, date))
+        .sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || ''))[0] || null;
+}
+function isMonthLocked(emploi, date) {
+    return (emploi.heuresManuelles || {})[date.slice(0, 7)] !== undefined;
+}
+
+// ===== Préférences locales (affichage…) =====
+function prefGet(key, def) { try { const v = localStorage.getItem(key); return v === null ? def : v; } catch { return def; } }
+function prefSet(key, value) { try { localStorage.setItem(key, value); } catch { /* stockage indisponible */ } }
+function getDisplayMode() { return prefGet('meszeur-affichage', 'tableau') === 'agenda' ? 'agenda' : 'tableau'; }
+
 async function touchActivity() {
     const now = new Date().toISOString();
     if (currentEmploi) {
@@ -208,9 +300,15 @@ function showPage(pageId, title = 'MesZeuR') {
     document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
     document.getElementById(pageId).classList.add('active');
     elements.pageTitle.textContent = title;
-    elements.btnBack.classList.toggle('hidden', pageId === 'page-home');
+    elements.btnBack.classList.toggle('hidden', pageId === 'page-home' || pageId === 'page-agenda');
     elements.btnSettings.classList.toggle('hidden', pageId === 'page-settings');
     window.scrollTo(0, 0);
+}
+
+// Accueil : page d'accueil classique ou agenda, selon l'affichage choisi.
+function goHome() {
+    if (getDisplayMode() === 'agenda') return openAgenda();
+    showPage('page-home');
 }
 
 function goToEntreprises() {
@@ -228,8 +326,11 @@ function navigateBack() {
         case 'page-form-entreprise':
         case 'page-emplois': goToEntreprises(); break;
         case 'page-form-emploi':
+            if (emploiFormContext.from === 'agenda') openAgenda();
+            else goToEmplois();
+            break;
         case 'page-heures': goToEmplois(); break;
-        default: showPage('page-home');
+        default: goHome();
     }
 }
 
@@ -364,7 +465,8 @@ function deleteEntreprise() {
 // ===== Emplois =====
 async function loadEmplois(entrepriseId) {
     const emplois = await getByIndex('emplois', 'entrepriseId', entrepriseId);
-    emplois.sort((a, b) => (b.lastModified || '').localeCompare(a.lastModified || ''));
+    // Contrat le plus récent en haut (date de début), même après modification.
+    emplois.sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || (b.id - a.id));
 
     elements.listeEmplois.innerHTML = '';
     if (!emplois.length) {
@@ -393,23 +495,120 @@ function updateDateFinVisibility() {
     if (!isCDD) elements.emploiDateFin.value = '';
 }
 
-function openFormEmploi(emploi = null) {
+// ----- Horaires habituels dans le formulaire -----
+function renderHorairesGrid(horaires) {
+    const rows = JOURS_FULL.map((jour, i) => {
+        const h = horaires[i] || {};
+        return `<div class="hor-row" data-day="${i}">
+            <label class="hor-day"><input type="checkbox" class="hor-travaille" ${h.travaille ? 'checked' : ''}> ${jour.slice(0, 3)}.</label>
+            <input type="time" class="hor-debut" step="300" value="${h.debut || ''}" aria-label="${jour} : début">
+            <input type="time" class="hor-fin" step="300" value="${h.fin || ''}" aria-label="${jour} : fin">
+            <input type="time" class="hor-pause" step="300" value="${h.pause || ''}" aria-label="${jour} : pause">
+        </div>`;
+    }).join('');
+    elements.horairesGrid.innerHTML = `<div class="hor-row hor-head"><span>Jour</span><span>Début</span><span>Fin</span><span>Pause</span></div>${rows}`;
+    syncHorairesRows();
+}
+function syncHorairesRows() {
+    elements.horairesGrid.querySelectorAll('.hor-row[data-day]').forEach(row => {
+        const on = row.querySelector('.hor-travaille').checked;
+        row.classList.toggle('off', !on);
+        row.querySelectorAll('input[type="time"]').forEach(inp => { inp.disabled = !on; });
+    });
+}
+function readHorairesGrid() {
+    return [...elements.horairesGrid.querySelectorAll('.hor-row[data-day]')].map(row => ({
+        travaille: row.querySelector('.hor-travaille').checked,
+        debut: row.querySelector('.hor-debut').value,
+        fin: row.querySelector('.hor-fin').value,
+        pause: row.querySelector('.hor-pause').value || '00:00'
+    }));
+}
+function copyLundiHoraires() {
+    const rows = [...elements.horairesGrid.querySelectorAll('.hor-row[data-day]')];
+    const src = rows[0];
+    rows.slice(1, 5).forEach(row => {
+        row.querySelector('.hor-travaille').checked = src.querySelector('.hor-travaille').checked;
+        ['hor-debut', 'hor-fin', 'hor-pause'].forEach(c => { row.querySelector('.' + c).value = src.querySelector('.' + c).value; });
+    });
+    syncHorairesRows();
+    showToast('Lundi copié sur mardi → vendredi');
+}
+
+// Horaires à afficher pour un emploi : les siens, sinon ceux déduits de son historique.
+// Si l'emploi n'a ni horaires ni historique complet, on reprend le contrat le plus récent qui en a.
+async function horairesForForm(emploi) {
+    if (emploi && emploi.horaires) return emploi.horaires;
+    const inferred = await inferHoraires(emploi);
+    if (inferred) return inferred;
+    const pause = (emploi && emploi.pauseDefaut) || DEFAULT_PAUSE;
+    return JOURS_FULL.map((_, i) => ({ travaille: i < 5, debut: '', fin: '', pause }));
+}
+
+// opts.from : 'classic' (tableau) ou 'agenda' ; opts.date : jour touché dans l'agenda.
+async function openFormEmploi(emploi = null, opts = {}) {
+    emploiFormContext = { from: opts.from || 'classic', date: opts.date || null };
+    const [emploisAll, entreprises] = await Promise.all([getAllFromStore('emplois'), getAllFromStore('entreprises')]);
+    const byRecent = (a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || (b.id - a.id);
+
+    // Nouvel emploi : on part du contrat précédent (même entreprise si on la connaît).
+    let source = emploi;
+    if (!emploi) {
+        const pool = currentEntreprise && emploiFormContext.from === 'classic'
+            ? emploisAll.filter(e => e.entrepriseId === currentEntreprise.id) : emploisAll;
+        source = [...pool].sort(byRecent)[0] || null;
+    }
+
     elements.formEmploiTitle.textContent = emploi ? "Modifier l'emploi" : 'Nouvel Emploi';
     elements.emploiId.value = emploi ? emploi.id : '';
-    elements.emploiEntrepriseId.value = currentEntreprise.id;
     elements.emploiPoste.value = emploi ? emploi.poste : '';
-    elements.emploiDateDebut.value = emploi ? emploi.dateDebut : '';
-    elements.emploiCdd.checked = emploi ? !emploi.cdi : true;   // coché = temps déterminé
+    elements.emploiDateDebut.value = emploi ? emploi.dateDebut : (emploiFormContext.date || '');
+    elements.emploiCdd.checked = emploi ? !emploi.cdi : (source ? !source.cdi : true);   // coché = temps déterminé
     elements.emploiDateFin.value = emploi ? (emploi.dateFin || '') : '';
-    elements.emploiTrajet.value = emploi ? (emploi.trajet || 0) : 0;
-    elements.emploiPauseRemuneree.checked = emploi ? !!emploi.pauseRemuneree : false;
-
-    const [h, m] = (emploi && emploi.pauseDefaut ? emploi.pauseDefaut : DEFAULT_PAUSE).split(':').map(Number);
+    elements.emploiTrajet.value = source ? (source.trajet || 0) : 0;
+    elements.emploiPauseRemuneree.checked = source ? !!source.pauseRemuneree : false;
+    const [h, m] = (source && source.pauseDefaut ? source.pauseDefaut : DEFAULT_PAUSE).split(':').map(Number);
     elements.emploiPauseHeures.value = h;
     elements.emploiPauseMinutes.value = m;
+    renderHorairesGrid(await horairesForForm(source));
+
+    // Intitulés déjà utilisés, proposés en saisie
+    const postes = [...new Set(emploisAll.map(e => e.poste))].sort((a, b) => a.localeCompare(b));
+    elements.postesList.innerHTML = postes.map(p => `<option value="${escapeHtml(p)}"></option>`).join('');
+
+    // Depuis l'agenda, on choisit l'entreprise dans le formulaire
+    const chooseEntreprise = !emploi && emploiFormContext.from === 'agenda';
+    elements.groupEmploiEntreprise.classList.toggle('hidden', !chooseEntreprise);
+    if (chooseEntreprise) {
+        const lastStart = id => emploisAll.filter(e => e.entrepriseId === id).reduce((mx, e) => (e.dateDebut > mx ? e.dateDebut : mx), '');
+        const sorted = [...entreprises].sort((a, b) => lastStart(b.id).localeCompare(lastStart(a.id)));
+        elements.emploiEntrepriseSelect.innerHTML = sorted
+            .map(e => `<option value="${e.id}">${escapeHtml(e.nom)}${e.adresse ? ' – ' + escapeHtml(e.adresse) : ''}</option>`).join('')
+            + '<option value="__new">+ Nouvelle entreprise…</option>';
+        elements.emploiEntrepriseSelect.value = source ? String(source.entrepriseId) : (sorted[0] ? String(sorted[0].id) : '__new');
+        updateNewEntrepriseVisibility();
+        elements.emploiEntrepriseId.value = '';
+    } else {
+        elements.groupNewEntreprise.classList.add('hidden');
+        elements.emploiNewEntrepriseNom.required = false;
+        elements.emploiNewEntrepriseAdresse.required = false;
+        elements.emploiEntrepriseId.value = emploi ? emploi.entrepriseId : (currentEntreprise ? currentEntreprise.id : '');
+    }
 
     updateDateFinVisibility();
     showPage('page-form-emploi', emploi ? 'Modifier' : 'Nouvel Emploi');
+}
+
+function updateNewEntrepriseVisibility() {
+    const isNew = elements.emploiEntrepriseSelect.value === '__new' && !elements.groupEmploiEntreprise.classList.contains('hidden');
+    elements.groupNewEntreprise.classList.toggle('hidden', !isNew);
+    elements.emploiNewEntrepriseNom.required = isNew;
+    elements.emploiNewEntrepriseAdresse.required = isNew;
+}
+
+function cancelFormEmploi() {
+    if (emploiFormContext.from === 'agenda') openAgenda();
+    else goToEmplois();
 }
 
 async function saveEmploi(event) {
@@ -429,10 +628,27 @@ async function saveEmploi(event) {
     const pauseDefaut = `${pad(isNaN(ph) ? 0 : ph)}:${pad(isNaN(pm) ? 30 : pm)}`;
 
     try {
+        const now = new Date().toISOString();
+        // Entreprise : celle du formulaire (agenda) ou l'entreprise courante (tableau)
+        let entrepriseId = parseInt(elements.emploiEntrepriseId.value);
+        if (!elements.groupEmploiEntreprise.classList.contains('hidden')) {
+            if (elements.emploiEntrepriseSelect.value === '__new') {
+                entrepriseId = await addToStore('entreprises', {
+                    nom: elements.emploiNewEntrepriseNom.value.trim(),
+                    adresse: elements.emploiNewEntrepriseAdresse.value.trim(),
+                    lastActivity: now
+                });
+            } else {
+                entrepriseId = parseInt(elements.emploiEntrepriseSelect.value);
+            }
+        }
+        const entreprise = await getByKey('entreprises', entrepriseId);
+        if (!entreprise) { showToast('Choisissez une entreprise', 'error'); return; }
+
         const existing = id ? (await getByKey('emplois', id)) || {} : {};
         const emploi = {
             ...existing,   // conserve heuresManuelles et tout le reste
-            entrepriseId: parseInt(elements.emploiEntrepriseId.value),
+            entrepriseId,
             poste: elements.emploiPoste.value.trim(),
             dateDebut,
             cdi: !isCDD,
@@ -440,7 +656,8 @@ async function saveEmploi(event) {
             trajet: parseInt(elements.emploiTrajet.value) || 0,
             pauseRemuneree: elements.emploiPauseRemuneree.checked,
             pauseDefaut,
-            lastModified: new Date().toISOString()
+            horaires: readHorairesGrid(),
+            lastModified: now
         };
         if (id) {
             emploi.id = id;
@@ -448,12 +665,20 @@ async function saveEmploi(event) {
             if (currentEmploi && currentEmploi.id === id) currentEmploi = emploi;
             showToast('Emploi modifié', 'success');
         } else {
-            await addToStore('emplois', emploi);
+            emploi.id = await addToStore('emplois', emploi);
             showToast('Emploi ajouté', 'success');
         }
-        currentEntreprise.lastActivity = new Date().toISOString();
-        await updateInStore('entreprises', currentEntreprise);
-        goToEmplois();
+        entreprise.lastActivity = now;
+        await updateInStore('entreprises', entreprise);
+        currentEntreprise = entreprise;
+
+        if (emploiFormContext.from === 'agenda') {
+            const date = emploiFormContext.date;
+            await openAgenda();
+            if (!id && date) await agendaAddEmploiOnDay(emploi, date);
+        } else {
+            goToEmplois();
+        }
     } catch (error) {
         showToast("Erreur lors de l'enregistrement", 'error');
         console.error(error);
@@ -848,6 +1073,8 @@ function generateODSContent(entreprise, emploi, heures) {
         + row(strCell('Temps de trajet'), strCell(`${emploi.trajet || 0} minutes`))
         + row(strCell('Pause rémunérée'), strCell(emploi.pauseRemuneree ? 'Oui' : 'Non'))
         + row(strCell('Pause par défaut'), strCell(emploi.pauseDefaut || DEFAULT_PAUSE))
+        + (emploi.horaires || []).map((h, i) => row(strCell(`Horaires ${JOURS_FULL[i]}`),
+            strCell(h.travaille && h.debut && h.fin ? `${h.debut}-${h.fin} pause ${h.pause || '00:00'}` : 'Non travaillé'))).join('')
         + row(strCell('Total heures travaillées'), numCell(totalHeures))
         + `</table:table>`;
 
@@ -1066,6 +1293,13 @@ async function importOdsData(data) {
         pauseRemuneree: info['Pause rémunérée'] === 'Oui',
         pauseDefaut: normalizeTime(info['Pause par défaut']) || DEFAULT_PAUSE
     };
+    if (JOURS_FULL.some(j => info[`Horaires ${j}`] !== undefined)) {
+        fields.horaires = JOURS_FULL.map(j => {
+            const m = String(info[`Horaires ${j}`] || '').match(/(\d{1,2}:\d{2})\s*-\s*(\d{1,2}:\d{2})(?:\D+(\d{1,2}:\d{2}))?/);
+            return m ? { travaille: true, debut: normalizeTime(m[1]), fin: normalizeTime(m[2]), pause: normalizeTime(m[3]) || '00:00' }
+                : { travaille: false, debut: '', fin: '', pause: '' };
+        });
+    }
 
     const now = new Date().toISOString();
     const norm = s => (s || '').trim().toLowerCase();
@@ -1191,9 +1425,11 @@ function escapeHtml(text) {
     return div.innerHTML;
 }
 
-function showModal(title, message, onConfirm, onCancel) {
+function showModal(title, message, onConfirm, onCancel, opts = {}) {
     elements.modalTitle.textContent = title;
     elements.modalMessage.textContent = message;
+    elements.modalConfirmBtn.textContent = opts.confirmLabel || 'Supprimer';
+    elements.modalConfirmBtn.className = opts.danger === false ? 'btn-primary' : 'btn-danger';
     modalConfirmCallback = onConfirm;
     modalCancelCallback = onCancel || null;
     elements.modalConfirm.classList.remove('hidden');
@@ -1219,8 +1455,16 @@ function initEventListeners() {
     elements.btnBack.addEventListener('click', navigateBack);
     elements.btnSettings.addEventListener('click', () => {
         showPage('page-settings', 'Paramètres');
+        const mode = getDisplayMode();
+        elements.affichageTableau.checked = mode === 'tableau';
+        elements.affichageAgenda.checked = mode === 'agenda';
         calculerBilanGlobal();
+        renderPointagesList();
     });
+    [elements.affichageTableau, elements.affichageAgenda].forEach(r => r.addEventListener('change', () => {
+        prefSet('meszeur-affichage', r.value);
+        showToast(r.value === 'agenda' ? "L'app s'ouvrira sur l'agenda" : "L'app s'ouvrira sur l'accueil classique", 'success');
+    }));
     elements.btnTravail.addEventListener('click', goToEntreprises);
 
     // Entreprises
@@ -1234,10 +1478,13 @@ function initEventListeners() {
     elements.btnAddEmploi.addEventListener('click', () => openFormEmploi());
     elements.formEmploi.addEventListener('submit', saveEmploi);
     elements.emploiCdd.addEventListener('change', updateDateFinVisibility);
-    elements.btnCancelEmploi.addEventListener('click', goToEmplois);
+    elements.btnCancelEmploi.addEventListener('click', cancelFormEmploi);
+    elements.emploiEntrepriseSelect.addEventListener('change', updateNewEntrepriseVisibility);
+    elements.horairesGrid.addEventListener('change', e => { if (e.target.classList.contains('hor-travaille')) syncHorairesRows(); });
+    elements.btnCopyLundi.addEventListener('click', copyLundiHoraires);
 
     // Heures
-    elements.btnEditEmploi.addEventListener('click', () => openFormEmploi(currentEmploi));
+    elements.btnEditEmploi.addEventListener('click', () => openFormEmploi(currentEmploi, { from: 'classic' }));
     elements.btnDeleteEmploi.addEventListener('click', deleteEmploi);
     elements.btnPrevWeek.addEventListener('click', () => navigateWeek(-1));
     elements.btnNextWeek.addEventListener('click', () => navigateWeek(1));
@@ -1298,6 +1545,7 @@ function initEventListeners() {
     document.addEventListener('keydown', e => {
         if (e.key !== 'Escape') return;
         if (!elements.modalConfirm.classList.contains('hidden')) closeModal(false);
+        else if (typeof isSheetOpen === 'function' && isSheetOpen()) closeSheet();
         else if (!elements.weekPickerModal.classList.contains('hidden')) elements.weekPickerModal.classList.add('hidden');
         else navigateBack();
     });
@@ -1321,10 +1569,17 @@ async function initApp() {
         if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
         elements.appVersion.textContent = APP_VERSION;
         initEventListeners();
+        initAgenda();
+        initPointage();
         await registerServiceWorker();
 
-        if (new URLSearchParams(location.search).get('action') === 'travail') await goToEntreprises();
-        else showPage('page-home');
+        // ?action=… vient du raccourci de l'icône ou du tag NFC ; on le retire pour qu'un rechargement ne le rejoue pas.
+        const action = new URLSearchParams(location.search).get('action');
+        if (action) history.replaceState(null, '', location.pathname);
+        if (action === 'travail') await goToEntreprises();
+        else await goHome();
+        if (action === 'pointer') await pointer('nfc');
+        startNfcScan();
         console.log(`MesZeuR v${APP_VERSION} initialized`);
     } catch (error) {
         console.error('App initialization failed:', error);

@@ -98,9 +98,18 @@
             <form id="form-emploi" class="form-container">
                 <input type="hidden" id="emploi-id">
                 <input type="hidden" id="emploi-entreprise-id">
+                <div class="form-group hidden" id="group-emploi-entreprise">
+                    <label for="emploi-entreprise-select">Entreprise *</label>
+                    <select id="emploi-entreprise-select" class="form-select"></select>
+                    <div id="group-new-entreprise" class="new-entreprise hidden">
+                        <input type="text" id="emploi-new-entreprise-nom" placeholder="Nom de l'entreprise">
+                        <input type="text" id="emploi-new-entreprise-adresse" placeholder="Adresse / Ville">
+                    </div>
+                </div>
                 <div class="form-group">
                     <label for="emploi-poste">Intitulé du poste *</label>
-                    <input type="text" id="emploi-poste" required placeholder="Ex: Agent de production">
+                    <input type="text" id="emploi-poste" required placeholder="Ex: Agent de production" list="postes-list" autocomplete="off">
+                    <datalist id="postes-list"></datalist>
                 </div>
                 <div class="form-group">
                     <label for="emploi-date-debut">Date de début *</label>
@@ -144,6 +153,12 @@
                         <input type="number" id="emploi-pause-minutes" min="0" max="59" value="30">
                         <span>min</span>
                     </div>
+                </div>
+                <div class="form-group">
+                    <label>Horaires habituels</label>
+                    <p class="field-hint">L'agenda et le pointage s'en servent pour placer la journée. Cochez les jours travaillés.</p>
+                    <div id="horaires-grid" class="horaires-grid"></div>
+                    <button type="button" id="btn-copy-lundi" class="btn-link">Copier lundi sur mardi → vendredi</button>
                 </div>
                 <div class="form-actions">
                     <button type="button" id="btn-cancel-emploi" class="btn-secondary">Annuler</button>
@@ -259,10 +274,76 @@
             </div>
         </section>
 
+        <!-- Agenda -->
+        <section id="page-agenda" class="page">
+            <div class="agenda-toolbar">
+                <div class="agenda-nav">
+                    <button id="ag-prev" class="ag-nav-btn" aria-label="Précédent">
+                        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M15.41 7.41L14 6l-6 6 6 6 1.41-1.41L10.83 12z"/></svg>
+                    </button>
+                    <button id="ag-label" class="ag-label" title="Revenir à aujourd'hui"></button>
+                    <button id="ag-next" class="ag-nav-btn" aria-label="Suivant">
+                        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M10 6L8.59 7.41 13.17 12l-4.58 4.59L10 18l6-6z"/></svg>
+                    </button>
+                    <div class="ag-view-toggle" role="group" aria-label="Vue">
+                        <button data-view="day" type="button">Jour</button>
+                        <button data-view="week" type="button">Sem.</button>
+                    </div>
+                </div>
+                <div class="agenda-actions">
+                    <button id="btn-pointer" class="btn-pointer" type="button">
+                        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm0 18a8 8 0 1 1 0-16 8 8 0 0 1 0 16zm.5-13H11v6l5.25 3.15.75-1.23-4.5-2.67z"/></svg>
+                        <span class="btn-pointer-text"><span id="btn-pointer-label">Pointer</span><small id="btn-pointer-sub"></small></span>
+                    </button>
+                    <div class="ag-total"><small id="ag-total-label">Semaine</small><strong id="ag-total">0H00</strong></div>
+                    <button id="ag-more" class="ag-more" type="button" aria-label="Plus d'options">
+                        <svg viewBox="0 0 24 24" width="22" height="22"><path fill="currentColor" d="M12 8a2 2 0 1 0 0-4 2 2 0 0 0 0 4zm0 2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm0 6a2 2 0 1 0 0 4 2 2 0 0 0 0-4z"/></svg>
+                    </button>
+                    <div id="ag-more-menu" class="ag-menu hidden" role="menu">
+                        <button type="button" data-cmd="today">Aujourd'hui</button>
+                        <button type="button" data-cmd="fill">Remplir la semaine (horaires habituels)</button>
+                        <button type="button" data-cmd="weekend">Afficher / masquer le week-end</button>
+                        <button type="button" data-cmd="entreprises">Mes entreprises (vue détaillée)</button>
+                    </div>
+                </div>
+            </div>
+            <div id="ag-scroll" class="agenda-scroll">
+                <div id="ag-head" class="agenda-head"></div>
+                <div id="ag-grid" class="agenda-grid"></div>
+            </div>
+        </section>
+
         <!-- Paramètres -->
         <section id="page-settings" class="page">
             <h2>Paramètres</h2>
             <div class="settings-container">
+
+                <div class="settings-section">
+                    <h3>Affichage</h3>
+                    <p class="settings-description">Les deux affichages lisent et enregistrent exactement les mêmes données. Vous pouvez changer à tout moment.</p>
+                    <div class="choice-cards">
+                        <label class="choice-card">
+                            <input type="radio" name="affichage" id="affichage-tableau" value="tableau">
+                            <span><strong>Tableau</strong><small>Entreprise → emploi → semaine</small></span>
+                        </label>
+                        <label class="choice-card">
+                            <input type="radio" name="affichage" id="affichage-agenda" value="agenda">
+                            <span><strong>Agenda</strong><small>Ouverture directe sur la semaine</small></span>
+                        </label>
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Pointage</h3>
+                    <p class="settings-description">Le pointage s'applique au contrat en cours le plus récent. L'app décide seule s'il s'agit d'une arrivée ou d'un départ, d'après vos horaires habituels : un oubli le matin ne transforme pas votre départ du soir en arrivée.</p>
+                    <button id="btn-program-tag" class="btn-primary" type="button">
+                        <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M20 2H4c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 18H4V4h16v16zM18 6h-5c-1.1 0-2 .9-2 2v2.28c-.6.35-1 .98-1 1.72 0 1.1.9 2 2 2s2-.9 2-2c0-.74-.4-1.38-1-1.72V8h3v8H8V8h2V6H6v12h12V6z"/></svg>
+                        Programmer un tag NFC
+                    </button>
+                    <p id="nfc-status" class="settings-description nfc-status"></p>
+                    <h4 class="sub-title">Derniers pointages</h4>
+                    <div id="pointages-list" class="pointages-list"></div>
+                </div>
 
                 <div class="settings-section">
                     <h3>Export des données</h3>
@@ -324,11 +405,36 @@
         </div>
     </div>
 
+    <!-- Panneau du bas (agenda) -->
+    <div id="sheet" class="sheet-backdrop hidden">
+        <div class="sheet" role="dialog" aria-modal="true">
+            <div class="sheet-grip"></div>
+            <div id="sheet-body" class="sheet-body"></div>
+        </div>
+    </div>
+
+    <!-- Confirmation de pointage -->
+    <div id="punch-overlay" class="punch-overlay hidden" role="alertdialog" aria-live="assertive">
+        <div class="punch-card">
+            <div id="punch-icon" class="punch-icon">✓</div>
+            <div id="punch-title" class="punch-title"></div>
+            <div id="punch-sub" class="punch-sub"></div>
+            <div id="punch-note" class="punch-note hidden"></div>
+            <div class="punch-actions">
+                <button id="punch-swap" class="btn-secondary" type="button"></button>
+                <button id="punch-undo" class="btn-secondary" type="button">Annuler</button>
+                <button id="punch-ok" class="btn-primary" type="button">OK</button>
+            </div>
+        </div>
+    </div>
+
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
 </div>
 
 <!-- jszip.min.js doit être placé à côté de index.html (voir instructions) -->
 <script src="jszip.min.js"></script>
 <script src="app.js"></script>
+<script src="agenda.js"></script>
+<script src="pointage.js"></script>
 </body>
 </html>
