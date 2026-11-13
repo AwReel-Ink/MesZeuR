@@ -1,7 +1,7 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const APP_VERSION = '1.7.0';
+const APP_VERSION = '1.7.1';
 const DB_NAME = 'MesZeuRDB';
 const DB_VERSION = 3;   // v2 : journal des pointages ; v3 : identifiants texte + updatedAt (serveur maison)
 const DEFAULT_PAUSE = '00:30';
