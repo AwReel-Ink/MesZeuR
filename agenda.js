@@ -23,13 +23,19 @@ const MOIS_COURT = ['janv.', 'févr.', 'mars', 'avr.', 'mai', 'juin', 'juil.', '
 const agEl = id => document.getElementById(id);
 
 // ===== Petits utilitaires =====
-const emploiColor = emploi => AG_COLORS[((emploi && emploi.id) || 0) % AG_COLORS.length];
+// Couleur stable d'un emploi (la même sur tous les appareils) : calculée à partir de son identifiant texte.
+const emploiColor = emploi => {
+    const s = String((emploi && emploi.id) || '');
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+    return AG_COLORS[h % AG_COLORS.length];
+};
 const fmtHM = t => { if (!t) return ''; const [h, m] = t.split(':'); return `${Number(h)}h${m}`; };
 const minToHHMM = min => { min = ((Math.round(min) % 1440) + 1440) % 1440; return `${pad(Math.floor(min / 60))}:${pad(min % 60)}`; };
 const dayIndex = iso => (parseISO(iso).getDay() + 6) % 7;
 const agEmploi = id => AG.emplois.find(e => e.id === id);
 const agEntreprise = id => AG.entreprises.find(e => e.id === id);
-const byRecentStart = (a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || (b.id - a.id);
+const byRecentStart = (a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || String(b.id).localeCompare(String(a.id));
 const nowMinutes = () => { const n = new Date(); return n.getHours() * 60 + n.getMinutes(); };
 function isLandscape() {
     return window.matchMedia('(orientation: landscape) and (max-height: 560px)').matches || window.innerWidth >= 900;
@@ -318,10 +324,14 @@ async function agEndDrag() {
     AG.drag = null;
     if (!g) return;
     g.block.classList.remove('dragging');
-    if (!g.moved) return;
+    const redessiner = AG.renderApresDrag;      // une synchro est arrivée pendant le glisser
+    AG.renderApresDrag = false;
+    if (!g.moved) { if (redessiner) agRender(); return; }
     AG.suppressClick = true;
     setTimeout(() => { AG.suppressClick = false; }, 80);
-    const rec = { ...g.rec, estime: { ...(g.rec.estime || {}) } };
+    // On repart de la version en base (elle a pu changer par la synchro pendant le glisser)
+    const base = (await getByKey('heures', g.rec.id)) || g.rec;
+    const rec = { ...base, estime: { ...(base.estime || {}) } };
     if (g.edge === 'debut') { rec.debut = minToHHMM(g.d); rec.estime.debut = false; }
     else { rec.fin = minToHHMM(g.f); rec.estime.fin = false; }
     if (!rec.debut) rec.debut = minToHHMM(g.d);
@@ -408,7 +418,7 @@ function openActivityMenu(iso) {
             if (!btn) return;
             closeSheet();
             if (btn.dataset.add) { openFormEmploi(null, { from: 'agenda', date: iso }); return; }
-            const emp = agEmploi(Number(btn.dataset.emploi));
+            const emp = agEmploi(btn.dataset.emploi);   // identifiant texte
             if (emp) agendaAddEmploiOnDay(emp, iso);
         }
     });
@@ -454,6 +464,7 @@ function openDayPanel(recIn) {
     const locked = isMonthLocked(emp, recIn.date);
     let rec = { ...recIn, estime: { ...(recIn.estime || {}) } };
     let chain = Promise.resolve();
+    AG.panneau = { id: heureId(recIn.emploiId, recIn.date) };   // pour la mise à jour par la synchro
     let hab = null;
     horaireFor(emp, rec.date).then(h => { hab = h; });
 
@@ -534,6 +545,7 @@ function openDayPanel(recIn) {
     };
 
     openSheet(html, {
+        close: () => { AG.panneau = null; },
         click: e => {
             const step = e.target.closest('[data-step]');
             if (step) {

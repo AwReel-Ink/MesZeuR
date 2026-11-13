@@ -1,9 +1,9 @@
 // ===== MesZeuR Application =====
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-const APP_VERSION = '1.6.0';
+const APP_VERSION = '1.7.0';
 const DB_NAME = 'MesZeuRDB';
-const DB_VERSION = 2;   // v2 : ajout du journal des pointages
+const DB_VERSION = 3;   // v2 : journal des pointages ; v3 : identifiants texte + updatedAt (serveur maison)
 const DEFAULT_PAUSE = '00:30';
 
 const MOIS = ['janvier', 'février', 'mars', 'avril', 'mai', 'juin', 'juillet', 'août', 'septembre', 'octobre', 'novembre', 'décembre'];
@@ -140,35 +140,161 @@ function computePerMonth(emploi, heuresMap, overrides, lockedSet) {
 }
 
 // ===== IndexedDB =====
+// v3 : identifiants texte (UUID ; heures = `${emploiId}_${date}`) et updatedAt, pour la synchro « Serveur maison ».
+const DATA_STORES = ['entreprises', 'emplois', 'heures', 'pointages'];
+let migrationRapport = null;      // résultat de la migration v2 → v3 (affiché une fois)
+let modeSecours = false;          // migration impossible : base ancienne ouverte, écritures bloquées
+
+const newId = () => (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : Date.now().toString(36) + Math.random().toString(36).slice(2);
+const heureId = (emploiId, date) => `${emploiId}_${date}`;
+
+// Crée les 4 stores de données (sans autoIncrement) avec les mêmes index qu'avant.
+function createDataStores(database) {
+    const e = database.createObjectStore('entreprises', { keyPath: 'id' });
+    e.createIndex('nom', 'nom', { unique: false });
+    e.createIndex('lastActivity', 'lastActivity', { unique: false });
+    const m = database.createObjectStore('emplois', { keyPath: 'id' });
+    m.createIndex('entrepriseId', 'entrepriseId', { unique: false });
+    m.createIndex('lastModified', 'lastModified', { unique: false });
+    const h = database.createObjectStore('heures', { keyPath: 'id' });
+    h.createIndex('emploiId', 'emploiId', { unique: false });
+    h.createIndex('date', 'date', { unique: false });
+    h.createIndex('emploiId_date', ['emploiId', 'date'], { unique: true });
+    const p = database.createObjectStore('pointages', { keyPath: 'id' });
+    p.createIndex('ts', 'ts', { unique: false });
+    // Copie brute de l'ancienne base, conservée en secours (non synchronisée)
+    if (!database.objectStoreNames.contains('secours')) database.createObjectStore('secours', { keyPath: 'cle' });
+}
+
+const reqP = r => new Promise((resolve, reject) => {
+    r.onsuccess = () => resolve(r.result);
+    r.onerror = () => reject(r.error);
+});
+
+// Migration unique des numéros auto-incrémentés vers des identifiants texte.
+// Tout se passe dans la transaction de mise à jour : si une vérification échoue, tx.abort()
+// annule TOUT (la base reste en version 1/2, avec ses données d'origine, intactes).
+async function migrerVersV3(database, tx) {
+    const now = Date.now();
+    const anciens = DATA_STORES.filter(n => database.objectStoreNames.contains(n));
+    anciens.forEach(n => { tx.objectStore(n).name = `ancien_${n}`; });   // on met l'ancien contenu de côté
+    createDataStores(database);
+
+    const lire = n => anciens.includes(n) ? reqP(tx.objectStore(`ancien_${n}`).getAll()) : Promise.resolve([]);
+    const v2 = {
+        entreprises: await lire('entreprises'),
+        emplois: await lire('emplois'),
+        heures: await lire('heures'),
+        pointages: await lire('pointages')
+    };
+    // Copie de secours de l'ancienne base, telle quelle
+    tx.objectStore('secours').put({ cle: 'base_avant_v3', date: new Date(now).toISOString(), data: v2 });
+
+    const mapEnt = new Map(), mapEmp = new Map();
+    const orphelins = [];
+    const ref = (map, ancien, quoi) => {
+        if (ancien === undefined || ancien === null) return ancien;
+        if (map.has(ancien)) return map.get(ancien);
+        orphelins.push(`${quoi} ${ancien}`);           // référence déjà cassée avant la migration
+        return `ancien-${ancien}`;
+    };
+
+    const nouv = { entreprises: [], emplois: [], heures: [], pointages: [] };
+    v2.entreprises.forEach(r => { const id = newId(); mapEnt.set(r.id, id); nouv.entreprises.push({ ...r, id, ancienId: r.id, updatedAt: now }); });
+    v2.emplois.forEach(r => { const id = newId(); mapEmp.set(r.id, id); nouv.emplois.push({ ...r, id, ancienId: r.id, entrepriseId: ref(mapEnt, r.entrepriseId, 'entreprise'), updatedAt: now }); });
+    v2.heures.forEach(r => {
+        const emploiId = ref(mapEmp, r.emploiId, 'emploi');
+        nouv.heures.push({ ...r, id: heureId(emploiId, r.date), ancienId: r.id, emploiId, updatedAt: now });
+    });
+    v2.pointages.forEach(r => nouv.pointages.push({ ...r, id: newId(), ancienId: r.id, emploiId: ref(mapEmp, r.emploiId, 'emploi'), updatedAt: now }));
+
+    for (const n of DATA_STORES) {
+        const st = tx.objectStore(n);
+        for (const r of nouv[n]) await reqP(st.put(r));
+    }
+
+    // ----- Vérification complète avant de supprimer l'ancien contenu -----
+    const erreurs = [];
+    for (const n of DATA_STORES) {
+        const compte = await reqP(tx.objectStore(n).count());
+        if (compte !== v2[n].length) erreurs.push(`${n} : ${compte} au lieu de ${v2[n].length}`);
+    }
+    const lus = {};
+    for (const n of DATA_STORES) lus[n] = await reqP(tx.objectStore(n).getAll());
+    // Toute référence valide avant la migration doit pointer vers le BON nouvel enregistrement.
+    const entParAncien = new Map(lus.entreprises.map(r => [r.ancienId, r.id]));
+    const empParAncien = new Map(lus.emplois.map(r => [r.ancienId, r.id]));
+    const verifRef = (quoi, ancienCible, nouvelleRef, parAncien) => {
+        if (!parAncien.has(ancienCible)) return;                       // déjà cassée avant : conservée telle quelle
+        if (parAncien.get(ancienCible) !== nouvelleRef) erreurs.push(`${quoi} : référence incorrecte`);
+    };
+    const emploiV2 = new Map(v2.emplois.map(r => [r.id, r]));
+    const heureV2 = new Map(v2.heures.map(r => [r.id, r]));
+    const pointV2 = new Map(v2.pointages.map(r => [r.id, r]));
+    lus.emplois.forEach(r => verifRef(`emploi ${r.ancienId}`, emploiV2.get(r.ancienId)?.entrepriseId, r.entrepriseId, entParAncien));
+    lus.heures.forEach(r => {
+        verifRef(`journée ${r.ancienId}`, heureV2.get(r.ancienId)?.emploiId, r.emploiId, empParAncien);
+        if (r.id !== heureId(r.emploiId, r.date)) erreurs.push(`journée ${r.ancienId} : identifiant incorrect`);
+    });
+    lus.pointages.forEach(r => verifRef(`pointage ${r.ancienId}`, pointV2.get(r.ancienId)?.emploiId, r.emploiId, empParAncien));
+    // chaque ancien enregistrement est retrouvé une seule fois, avec son contenu
+    for (const n of DATA_STORES) {
+        const parAncien = new Map(lus[n].map(r => [r.ancienId, r]));
+        if (parAncien.size !== v2[n].length) erreurs.push(`${n} : anciens numéros en double ou manquants`);
+        v2[n].forEach(old => {
+            const r = parAncien.get(old.id);
+            if (!r) { erreurs.push(`${n} ${old.id} : non retrouvé`); return; }
+            for (const k of Object.keys(old)) {
+                if (['id', 'entrepriseId', 'emploiId'].includes(k)) continue;
+                if (JSON.stringify(old[k]) !== JSON.stringify(r[k])) erreurs.push(`${n} ${old.id} : champ ${k} différent`);
+            }
+        });
+    }
+    if (erreurs.length) throw new Error('Vérification de la migration échouée : ' + erreurs.slice(0, 5).join(' ; '));
+
+    anciens.forEach(n => database.deleteObjectStore(`ancien_${n}`));   // vérifié : on peut retirer l'ancien contenu
+    migrationRapport = {
+        entreprises: v2.entreprises.length, emplois: v2.emplois.length,
+        heures: v2.heures.length, pointages: v2.pointages.length, orphelins
+    };
+}
+
 function initDB() {
     return new Promise((resolve, reject) => {
+        let migrationErreur = null;
         const request = indexedDB.open(DB_NAME, DB_VERSION);
-        request.onerror = () => reject(request.error);
-        request.onsuccess = () => { db = request.result; resolve(db); };
+        request.onerror = () => reject(migrationErreur || request.error);
+        request.onsuccess = () => {
+            db = request.result;
+            // Une autre fenêtre ouvre une version plus récente : on libère la base.
+            db.onversionchange = () => { db.close(); showToast('Nouvelle version de MesZeuR : rechargez la page', 'error'); };
+            resolve(db);
+        };
         request.onupgradeneeded = (event) => {
-            const database = event.target.result;
-            if (!database.objectStoreNames.contains('entreprises')) {
-                const s = database.createObjectStore('entreprises', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('nom', 'nom', { unique: false });
-                s.createIndex('lastActivity', 'lastActivity', { unique: false });
-            }
-            if (!database.objectStoreNames.contains('emplois')) {
-                const s = database.createObjectStore('emplois', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('entrepriseId', 'entrepriseId', { unique: false });
-                s.createIndex('lastModified', 'lastModified', { unique: false });
-            }
-            if (!database.objectStoreNames.contains('heures')) {
-                const s = database.createObjectStore('heures', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('emploiId', 'emploiId', { unique: false });
-                s.createIndex('date', 'date', { unique: false });
-                s.createIndex('emploiId_date', ['emploiId', 'date'], { unique: true });
-            }
-            if (!database.objectStoreNames.contains('pointages')) {
-                const s = database.createObjectStore('pointages', { keyPath: 'id', autoIncrement: true });
-                s.createIndex('ts', 'ts', { unique: false });
+            const database = request.result;
+            const tx = request.transaction;
+            if (event.oldVersion === 0) { createDataStores(database); return; }
+            if (event.oldVersion < 3) {
+                migrerVersV3(database, tx).catch(err => {
+                    migrationErreur = err;
+                    migrationErreur.migration = true;
+                    console.error('[MesZeuR] migration annulée, données intactes :', err);
+                    try { tx.abort(); } catch (_) { /* déjà terminée */ }
+                });
             }
         };
         request.onblocked = () => showToast("Fermez les autres fenêtres de MesZeuR pour terminer la mise à jour", 'error');
+    });
+}
+
+// Ouverture de secours (après une migration annulée) : base dans sa version actuelle, en lecture.
+function openDBSecours() {
+    return new Promise((resolve, reject) => {
+        const request = indexedDB.open(DB_NAME);
+        request.onsuccess = () => { db = request.result; resolve(db); };
+        request.onerror = () => reject(request.error);
     });
 }
 
@@ -184,35 +310,84 @@ function dbRun(storeName, mode, fn) {
 }
 const getAllFromStore = s => dbRun(s, 'readonly', st => st.getAll());
 const getByKey = (s, k) => dbRun(s, 'readonly', st => st.get(k));
-const addToStore = (s, d) => dbRun(s, 'readwrite', st => st.add(d));
-const updateInStore = (s, d) => dbRun(s, 'readwrite', st => st.put(d));
-const deleteFromStore = (s, k) => dbRun(s, 'readwrite', st => st.delete(k));
 const getByIndex = (s, idx, v) => dbRun(s, 'readonly', st => st.index(idx).getAll(v));
 
-function bulkPut(storeName, items) {
-    return new Promise((resolve, reject) => {
-        const tx = db.transaction(storeName, 'readwrite');
-        const st = tx.objectStore(storeName);
+// ----- Écritures : TOUTES passent par ces fonctions (sauf « appliquer » de la synchro) -----
+// Pour les stores de données : id créé s'il manque, updatedAt posé, écriture avec put,
+// puis la modification est confiée à SyncMaison (envoi au serveur maison quand il est joignable).
+function preparer(store, data, opts = {}) {
+    if (modeSecours) throw new Error('Mode secours : modifications désactivées');
+    if (!DATA_STORES.includes(store)) return data;
+    if (store === 'heures') {
+        const attendu = heureId(data.emploiId, data.date);
+        if (!data.id) data.id = attendu;
+        else if (data.id !== attendu) throw new Error(`Identifiant de journée incohérent : ${data.id}`);
+    } else if (data.id === undefined || data.id === null || data.id === '') {
+        data.id = newId();
+    }
+    data.updatedAt = opts.updatedAt !== undefined ? opts.updatedAt : Date.now();
+    return data;
+}
+function copieSure(rec) {
+    try { return structuredClone(rec); } catch (_) { return JSON.parse(JSON.stringify(rec)); }
+}
+function syncModifie(store, rec) {
+    if (!DATA_STORES.includes(store) || !window.SyncMaison) return;
+    try { Promise.resolve(SyncMaison.modifie(store, copieSure(rec))).catch(err => console.error('[SyncMaison] modifie', err)); }
+    catch (err) { console.error('[SyncMaison] modifie', err); }
+}
+function syncSupprime(store, id) {
+    if (!DATA_STORES.includes(store) || !window.SyncMaison) return;
+    try { Promise.resolve(SyncMaison.supprime(store, id)).catch(err => console.error('[SyncMaison] supprime', err)); }
+    catch (err) { console.error('[SyncMaison] supprime', err); }
+}
+
+// Renvoie l'id (le code s'en sert, comme avant).
+async function addToStore(store, data, opts) {
+    preparer(store, data, opts);
+    await dbRun(store, 'readwrite', st => st.put(data));
+    syncModifie(store, data);
+    return data.id;
+}
+const updateInStore = addToStore;   // même règle : put + updatedAt + synchro
+
+async function deleteFromStore(store, id) {
+    if (modeSecours) throw new Error('Mode secours : modifications désactivées');
+    await dbRun(store, 'readwrite', st => st.delete(id));
+    syncSupprime(store, id);
+}
+
+async function bulkPut(store, items, opts) {
+    items.forEach(i => preparer(store, i, opts));
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(store, 'readwrite');
+        const st = tx.objectStore(store);
         items.forEach(i => st.put(i));
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error);
         tx.onabort = () => reject(tx.error);
     });
+    items.forEach(i => syncModifie(store, i));
 }
 
-// Écrit (ou supprime si vide) une journée. Partagé par l'agenda et le pointage.
+// Écrit (ou supprime si vide) une journée. Partagé par l'agenda, le tableau et le pointage.
 async function saveDayRecord(rec) {
-    const data = { ...rec };
+    const data = { ...rec, id: heureId(rec.emploiId, rec.date) };
     if (!data.repos && !data.debut && !data.fin) {
-        if (data.id) await deleteFromStore('heures', data.id);
+        if (await getByKey('heures', data.id)) await deleteFromStore('heures', data.id);
         return null;
     }
     if (data.estime && !Object.values(data.estime).some(Boolean)) delete data.estime;
-    if (data.id) { await updateInStore('heures', data); return data.id; }
-    delete data.id;
     return addToStore('heures', data);
 }
-const getDayRecord = (emploiId, date) => dbRun('heures', 'readonly', st => st.index('emploiId_date').get([emploiId, date]));
+// Appareil relié au serveur maison (adresse + compte) ?
+function syncConnectee() {
+    try {
+        const r = window.SyncMaison && SyncMaison.instance && SyncMaison.instance.reglages;
+        return !!(r && r.serveur() && r.jeton());
+    } catch (_) { return false; }
+}
+const getDayRecord = (emploiId, date) => getByKey('heures', heureId(emploiId, date));
 const getHeuresBetween = (from, to) => dbRun('heures', 'readonly', st => st.index('date').getAll(IDBKeyRange.bound(from, to)));
 
 // ===== Horaires habituels (un par jour, lundi = 0) =====
@@ -283,15 +458,21 @@ function prefGet(key, def) { try { const v = localStorage.getItem(key); return v
 function prefSet(key, value) { try { localStorage.setItem(key, value); } catch { /* stockage indisponible */ } }
 function getDisplayMode() { return prefGet('meszeur-affichage', 'tableau') === 'agenda' ? 'agenda' : 'tableau'; }
 
-async function touchActivity() {
+// On relit la base avant d'écrire : la version en mémoire a pu être dépassée par la synchro.
+async function touchActivity(majEmploi) {
     const now = new Date().toISOString();
     if (currentEmploi) {
-        currentEmploi.lastModified = now;
-        await updateInStore('emplois', currentEmploi);
+        const fresh = (await getByKey('emplois', currentEmploi.id)) || currentEmploi;
+        if (majEmploi) majEmploi(fresh);
+        fresh.lastModified = now;
+        await updateInStore('emplois', fresh);
+        currentEmploi = fresh;
     }
     if (currentEntreprise) {
-        currentEntreprise.lastActivity = now;
-        await updateInStore('entreprises', currentEntreprise);
+        const fresh = (await getByKey('entreprises', currentEntreprise.id)) || currentEntreprise;
+        fresh.lastActivity = now;
+        await updateInStore('entreprises', fresh);
+        currentEntreprise = fresh;
     }
 }
 
@@ -405,7 +586,7 @@ function openFormEntreprise(entreprise = null) {
 
 async function saveEntreprise(event) {
     event.preventDefault();
-    const id = elements.entrepriseId.value ? parseInt(elements.entrepriseId.value) : null;
+    const id = elements.entrepriseId.value || null;   // identifiant texte (UUID)
     try {
         if (id) {
             const existing = await getByKey('entreprises', id) || {};
@@ -442,7 +623,7 @@ function openEntreprise(entreprise) {
 function deleteEntreprise() {
     showModal(
         "Supprimer l'entreprise ?",
-        `Êtes-vous sûr de vouloir supprimer "${currentEntreprise.nom}" et tous ses emplois et heures associés ?`,
+        `Supprimer "${currentEntreprise.nom}", tous ses emplois et toutes leurs heures, sur cet appareil ET sur tous les appareils synchronisés avec le serveur maison ?`,
         async () => {
             try {
                 const emplois = await getByIndex('emplois', 'entrepriseId', currentEntreprise.id);
@@ -466,7 +647,7 @@ function deleteEntreprise() {
 async function loadEmplois(entrepriseId) {
     const emplois = await getByIndex('emplois', 'entrepriseId', entrepriseId);
     // Contrat le plus récent en haut (date de début), même après modification.
-    emplois.sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || (b.id - a.id));
+    emplois.sort((a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || String(b.id).localeCompare(String(a.id)));
 
     elements.listeEmplois.innerHTML = '';
     if (!emplois.length) {
@@ -549,7 +730,7 @@ async function horairesForForm(emploi) {
 async function openFormEmploi(emploi = null, opts = {}) {
     emploiFormContext = { from: opts.from || 'classic', date: opts.date || null };
     const [emploisAll, entreprises] = await Promise.all([getAllFromStore('emplois'), getAllFromStore('entreprises')]);
-    const byRecent = (a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || (b.id - a.id);
+    const byRecent = (a, b) => (b.dateDebut || '').localeCompare(a.dateDebut || '') || String(b.id).localeCompare(String(a.id));
 
     // Nouvel emploi : on part du contrat précédent (même entreprise si on la connaît).
     let source = emploi;
@@ -614,7 +795,7 @@ function cancelFormEmploi() {
 async function saveEmploi(event) {
     event.preventDefault();
     const isCDD = elements.emploiCdd.checked;
-    const id = elements.emploiId.value ? parseInt(elements.emploiId.value) : null;
+    const id = elements.emploiId.value || null;   // identifiant texte (UUID)
     const dateDebut = elements.emploiDateDebut.value;
     const dateFin = isCDD ? elements.emploiDateFin.value : null;
 
@@ -630,7 +811,7 @@ async function saveEmploi(event) {
     try {
         const now = new Date().toISOString();
         // Entreprise : celle du formulaire (agenda) ou l'entreprise courante (tableau)
-        let entrepriseId = parseInt(elements.emploiEntrepriseId.value);
+        let entrepriseId = elements.emploiEntrepriseId.value;
         if (!elements.groupEmploiEntreprise.classList.contains('hidden')) {
             if (elements.emploiEntrepriseSelect.value === '__new') {
                 entrepriseId = await addToStore('entreprises', {
@@ -639,7 +820,7 @@ async function saveEmploi(event) {
                     lastActivity: now
                 });
             } else {
-                entrepriseId = parseInt(elements.emploiEntrepriseSelect.value);
+                entrepriseId = elements.emploiEntrepriseSelect.value;
             }
         }
         const entreprise = await getByKey('entreprises', entrepriseId);
@@ -712,7 +893,7 @@ async function openEmploi(emploi) {
 function deleteEmploi() {
     showModal(
         "Supprimer l'emploi ?",
-        `Êtes-vous sûr de vouloir supprimer "${currentEmploi.poste}" et toutes les heures associées ?`,
+        `Supprimer "${currentEmploi.poste}" et toutes ses heures, sur cet appareil ET sur tous les appareils synchronisés avec le serveur maison ?`,
         async () => {
             try {
                 const heures = await getByIndex('heures', 'emploiId', currentEmploi.id);
@@ -731,6 +912,15 @@ function deleteEmploi() {
 // ===== Saisie des heures : tableau hebdomadaire =====
 function dayQuery(cls, dateStr) {
     return elements.heuresTable.querySelector(`.${cls}[data-date="${dateStr}"]`);
+}
+
+// Deux journées identiques ? (une journée vide équivaut à l'absence de journée)
+function memeJournee(a, b) {
+    const vide = r => !r || (!r.repos && !r.debut && !r.fin);
+    if (vide(a) || vide(b)) return vide(a) && vide(b);
+    if (!!a.repos !== !!b.repos) return false;
+    if (a.repos) return true;
+    return (a.debut || '') === (b.debut || '') && (a.fin || '') === (b.fin || '') && (a.pause || '00:00') === (b.pause || '00:00');
 }
 
 function readDayFromDOM(dateStr) {
@@ -932,15 +1122,12 @@ async function saveHeures() {
             const dateStr = formatDateISO(addDays(currentWeekStart, i));
             if (locked.has(dateStr.slice(0, 7))) continue;   // mois en saisie manuelle : on ne touche à rien
             const rec = readDayFromDOM(dateStr);
+            // Jour non modifié à l'écran : on n'y touche pas (pas de fausse modification envoyée à la synchro)
+            if (memeJournee(rec, heuresCache.get(dateStr))) continue;
             const old = byDate.get(dateStr);
-
-            if (!rec.repos && !rec.debut && !rec.fin) {      // jour vide : rien à stocker
-                if (old) await deleteFromStore('heures', old.id);
-                continue;
-            }
-            const data = { emploiId: currentEmploi.id, date: dateStr, repos: rec.repos, pause: rec.pause, debut: rec.debut, fin: rec.fin };
-            if (old) { data.id = old.id; await updateInStore('heures', data); }
-            else await addToStore('heures', data);
+            const data = { ...(old || {}), emploiId: currentEmploi.id, date: dateStr, repos: rec.repos, pause: rec.pause, debut: rec.debut, fin: rec.fin };
+            delete data.estime;   // corrigé à la main : plus d'heure estimée
+            await saveDayRecord(data);
         }
 
         await touchActivity();
@@ -955,8 +1142,7 @@ async function saveHeures() {
 }
 
 async function persistManual(heuresManuelles) {
-    currentEmploi.heuresManuelles = heuresManuelles;
-    await touchActivity();
+    await touchActivity(fresh => { fresh.heuresManuelles = heuresManuelles; });
 }
 
 async function onManualCheckChange() {
@@ -1118,19 +1304,19 @@ function wrapContentXml(sheets) {
 </office:document-content>`;
 }
 
-async function buildODS(entreprise, emploi, heures) {
+async function buildODS(entreprise, emploi, heures, optFichier = {}) {
     const zip = new JSZip();
     const mime = 'application/vnd.oasis.opendocument.spreadsheet';
-    zip.file('mimetype', mime, { compression: 'STORE' });   // doit être le premier fichier, non compressé
+    zip.file('mimetype', mime, { compression: 'STORE', ...optFichier });   // doit être le premier fichier, non compressé
     zip.file('META-INF/manifest.xml', `<?xml version="1.0" encoding="UTF-8"?>
 <manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0" manifest:version="1.2">
 <manifest:file-entry manifest:full-path="/" manifest:media-type="${mime}"/>
 <manifest:file-entry manifest:full-path="content.xml" manifest:media-type="text/xml"/>
 <manifest:file-entry manifest:full-path="styles.xml" manifest:media-type="text/xml"/>
-</manifest:manifest>`);
+</manifest:manifest>`, optFichier);
     zip.file('styles.xml', `<?xml version="1.0" encoding="UTF-8"?>
-<office:document-styles xmlns:office="${NS.office}" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.2"></office:document-styles>`);
-    zip.file('content.xml', wrapContentXml(generateODSContent(entreprise, emploi, heures)));
+<office:document-styles xmlns:office="${NS.office}" xmlns:style="urn:oasis:names:tc:opendocument:xmlns:style:1.0" office:version="1.2"></office:document-styles>`, optFichier);
+    zip.file('content.xml', wrapContentXml(generateODSContent(entreprise, emploi, heures)), optFichier);
     return zip.generateAsync({ type: 'uint8array', mimeType: mime, compression: 'DEFLATE' });
 }
 
@@ -1145,41 +1331,52 @@ function downloadBlob(blob, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 2000);
 }
 
-async function exportAllToZip() {
-    if (typeof JSZip === 'undefined') {
-        showToast('JSZip est introuvable : ajoutez jszip.min.js à côté de index.html', 'error');
-        return;
+// Fabrique le ZIP (un dossier par entreprise, un .ods par emploi) sans le télécharger.
+// Sert à l'export manuel ET à la « copie lisible » envoyée au serveur maison.
+// dateFixe : dates internes du ZIP figées, pour que le même contenu donne exactement le même fichier
+// (le module n'envoie la copie que si son contenu a changé).
+async function construireExportZip(opts = {}) {
+    if (typeof JSZip === 'undefined') throw new Error('JSZip est introuvable : ajoutez jszip.min.js à côté de index.html');
+    const [entreprises, emplois] = await Promise.all([getAllFromStore('entreprises'), getAllFromStore('emplois')]);
+    if (!emplois.length) {
+        const err = new Error('Aucune donnée à exporter');
+        err.vide = true;
+        throw err;   // la copie lisible n'est pas envoyée (un fichier vide n'a aucun intérêt)
     }
-    try {
-        const [entreprises, emplois] = await Promise.all([getAllFromStore('entreprises'), getAllFromStore('emplois')]);
-        if (!emplois.length) { showToast('Aucune donnée à exporter', 'error'); return; }
-        showToast('Export en cours…');
+    const optFichier = opts.dateFixe ? { date: new Date(2000, 0, 1), createFolders: false } : {};
+    const root = new JSZip();
+    const usedFolders = new Set();
+    let count = 0;
 
-        const root = new JSZip();
-        const usedFolders = new Set();
-        let count = 0;
-
-        for (const entreprise of [...entreprises].sort((a, b) => a.nom.localeCompare(b.nom))) {
-            const emps = emplois.filter(e => e.entrepriseId === entreprise.id)
-                .sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || ''));
-            if (!emps.length) continue;
-            const folder = root.folder(uniqueName(sanitizeFilename(entreprise.nom), usedFolders));
-            const usedFiles = new Set();
-            for (const emploi of emps) {
-                const heures = await getByIndex('heures', 'emploiId', emploi.id);
-                const bytes = await buildODS(entreprise, emploi, heures);
-                const base = `${sanitizeFilename(emploi.poste)}_${emploi.dateDebut || 'sans-date'}_${emploi.cdi ? 'CDI' : (emploi.dateFin || 'CDD')}`;
-                folder.file(uniqueName(base, usedFiles, '.ods'), bytes, { compression: 'STORE' });
-                count++;
-            }
+    for (const entreprise of [...entreprises].sort((a, b) => a.nom.localeCompare(b.nom))) {
+        const emps = emplois.filter(e => e.entrepriseId === entreprise.id)
+            .sort((a, b) => (a.dateDebut || '').localeCompare(b.dateDebut || '') || String(a.id).localeCompare(String(b.id)));
+        if (!emps.length) continue;
+        const dossier = uniqueName(sanitizeFilename(entreprise.nom), usedFolders);
+        if (!opts.dateFixe) root.folder(dossier);
+        const usedFiles = new Set();
+        for (const emploi of emps) {
+            const heures = (await getByIndex('heures', 'emploiId', emploi.id)).sort((a, b) => a.date.localeCompare(b.date));
+            const bytes = await buildODS(entreprise, emploi, heures, optFichier);
+            const base = `${sanitizeFilename(emploi.poste)}_${emploi.dateDebut || 'sans-date'}_${emploi.cdi ? 'CDI' : (emploi.dateFin || 'CDD')}`;
+            root.file(`${dossier}/${uniqueName(base, usedFiles, '.ods')}`, bytes, { compression: 'STORE', ...optFichier });
+            count++;
         }
+    }
+    const blob = await root.generateAsync({ type: 'blob', compression: 'DEFLATE' });
+    return { blob, nom: `MesZeuR_${todayISO()}.zip`, count };
+}
 
-        const blob = await root.generateAsync({ type: 'blob', compression: 'DEFLATE' });
-        downloadBlob(blob, `MesZeuR_${todayISO()}.zip`);
+// Export manuel : fabrique le ZIP puis le télécharge.
+async function exportAllToZip() {
+    try {
+        showToast('Export en cours…');
+        const { blob, nom, count } = await construireExportZip();
+        downloadBlob(blob, nom);
         showToast(`Export terminé : ${count} fichier(s) dans un ZIP`, 'success');
     } catch (error) {
-        showToast("Erreur lors de l'export", 'error');
-        console.error(error);
+        showToast(error.vide || /JSZip/.test(error.message) ? error.message : "Erreur lors de l'export", 'error');
+        if (!error.vide) console.error(error);
     }
 }
 
@@ -1301,34 +1498,56 @@ async function importOdsData(data) {
         });
     }
 
+    // Le fichier ne dit pas quand les données ont été modifiées : updatedAt = 1 (« ancien »).
+    // Avec le serveur maison, ce qu'il possède déjà garde sa version ; le reste lui est ajouté.
+    // Appareil connecté au serveur : ce qui est déjà sur l'appareil EST la version du serveur (ou plus
+    // récente) → on ne le remplace pas, on n'ajoute que ce qui manque. (Le remplacer par une version
+    // « ancienne » ferait refuser l'envoi par le serveur et laisserait cet appareil différent des autres.)
+    const IMPORT = { updatedAt: 1 };
+    const connecte = syncConnectee();
     const now = new Date().toISOString();
     const norm = s => (s || '').trim().toLowerCase();
     const entreprises = await getAllFromStore('entreprises');
     let entreprise = entreprises.find(e => norm(e.nom) === norm(nom) && norm(e.adresse) === norm(adresse));
     if (!entreprise) {
-        const id = await addToStore('entreprises', { nom, adresse, lastActivity: now });
+        const id = await addToStore('entreprises', { nom, adresse, lastActivity: now }, IMPORT);   // nouvel UUID
         entreprise = await getByKey('entreprises', id);
     }
 
     const emplois = await getByIndex('emplois', 'entrepriseId', entreprise.id);
     let emploi = emplois.find(e => norm(e.poste) === norm(poste) && e.dateDebut === dateDebut);
     const created = !emploi;
-    if (emploi) {
+    let joursConserves = 0;
+    if (emploi && connecte) {
+        // On garde l'emploi tel quel ; seuls les mois de saisie manuelle absents sont ajoutés (vraie modification).
+        const ajouts = Object.keys(manual).filter(k => !(emploi.heuresManuelles || {}).hasOwnProperty(k));
+        if (ajouts.length) {
+            ajouts.forEach(k => { emploi.heuresManuelles = { ...(emploi.heuresManuelles || {}), [k]: manual[k] }; });
+            await updateInStore('emplois', emploi);
+        }
+    } else if (emploi) {
         Object.assign(emploi, fields, { heuresManuelles: { ...(emploi.heuresManuelles || {}), ...manual }, lastModified: now });
-        await updateInStore('emplois', emploi);
+        await updateInStore('emplois', emploi, IMPORT);
     } else {
         emploi = { entrepriseId: entreprise.id, poste, dateDebut, ...fields, heuresManuelles: manual, lastModified: now };
-        emploi.id = await addToStore('emplois', emploi);
+        emploi.id = await addToStore('emplois', emploi, IMPORT);   // nouvel UUID
     }
 
+    // Journées : id fixe `${emploiId}_${date}` ; on garde les autres champs d'une journée déjà présente.
     const existing = new Map((await getByIndex('heures', 'emploiId', emploi.id)).map(h => [h.date, h]));
-    const items = [...days.values()].map(d => {
-        const old = existing.get(d.date);
-        return { ...(old ? { id: old.id } : {}), emploiId: emploi.id, ...d };
+    const aEcrire = [...days.values()].filter(d => {
+        if (connecte && existing.has(d.date)) { joursConserves++; return false; }
+        return true;
     });
-    if (items.length) await bulkPut('heures', items);
+    const items = aEcrire.map(d => {
+        const old = existing.get(d.date) || {};
+        const rec = { ...old, emploiId: emploi.id, ...d, id: heureId(emploi.id, d.date) };
+        delete rec.estime;
+        return rec;
+    });
+    if (items.length) await bulkPut('heures', items, IMPORT);
 
-    return { created, jours: items.length, mois: Object.keys(manual).length };
+    return { created, jours: items.length, conserves: joursConserves, mois: Object.keys(manual).length };
 }
 
 async function importFiles(fileList) {
@@ -1336,11 +1555,11 @@ async function importFiles(fileList) {
         showToast('JSZip est introuvable : ajoutez jszip.min.js à côté de index.html', 'error');
         return;
     }
-    const stats = { emplois: 0, jours: 0, mois: 0, erreurs: 0 };
+    const stats = { emplois: 0, jours: 0, conserves: 0, mois: 0, erreurs: 0 };
     const handle = async (data, label) => {
         try {
             const r = await importOdsData(data);
-            stats.emplois++; stats.jours += r.jours; stats.mois += r.mois;
+            stats.emplois++; stats.jours += r.jours; stats.conserves += r.conserves; stats.mois += r.mois;
         } catch (error) {
             stats.erreurs++;
             console.error(`Import de ${label} impossible :`, error);
@@ -1363,9 +1582,13 @@ async function importFiles(fileList) {
         }
     }
 
-    let msg = `Import : ${stats.emplois} emploi(s), ${stats.jours} jour(s), ${stats.mois} mois manuel(s)`;
+    let msg = `Import : ${stats.emplois} emploi(s), ${stats.jours} jour(s) ajouté(s) ou mis à jour, ${stats.mois} mois manuel(s)`;
     if (stats.erreurs) msg += ` — ${stats.erreurs} fichier(s) en erreur (voir console)`;
-    showToast(msg, stats.erreurs ? 'error' : 'success');
+    msg += syncConnectee()
+        ? `. Serveur maison : ${stats.conserves} journée(s) déjà présente(s) gardent leur version ; les journées nouvelles lui seront ajoutées.`
+        : '. Serveur maison : les journées qu\'il possède déjà garderont sa version, les autres lui seront ajoutées.';
+    showToast(msg, stats.erreurs ? 'error' : 'success', 9000);
+    if (typeof rafraichirApresSynchro === 'function') rafraichirApresSynchro([]);
     await loadEntreprises();
     await calculerBilanGlobal();
 }
@@ -1429,6 +1652,7 @@ function showModal(title, message, onConfirm, onCancel, opts = {}) {
     elements.modalTitle.textContent = title;
     elements.modalMessage.textContent = message;
     elements.modalConfirmBtn.textContent = opts.confirmLabel || 'Supprimer';
+    elements.modalCancel.textContent = opts.cancelLabel || 'Annuler';
     elements.modalConfirmBtn.className = opts.danger === false ? 'btn-primary' : 'btn-danger';
     modalConfirmCallback = onConfirm;
     modalCancelCallback = onCancel || null;
@@ -1443,11 +1667,11 @@ function closeModal(confirmed) {
     if (cb) cb();
 }
 
-function showToast(message, type = '') {
+function showToast(message, type = '', duree = 3500) {
     clearTimeout(toastTimeout);
     elements.toast.textContent = message;
     elements.toast.className = 'toast' + (type ? ` ${type}` : '');
-    toastTimeout = setTimeout(() => elements.toast.classList.add('hidden'), 3500);
+    toastTimeout = setTimeout(() => elements.toast.classList.add('hidden'), duree);
 }
 
 // ===== Événements =====
@@ -1536,6 +1760,10 @@ function initEventListeners() {
         if (files.length) await importFiles(files);
     });
     elements.bilanToggle.addEventListener('click', toggleBilanDetails);
+    document.getElementById('btn-serveur-maison').addEventListener('click', () => {
+        if (window.SyncMaison && SyncMaison.instance) SyncMaison.ouvrirReglages();
+        else showToast(modeSecours ? 'Synchronisation indisponible en mode secours' : 'Module de synchronisation absent (sync-maison.js)', 'error');
+    });
 
     // Modal
     elements.modalCancel.addEventListener('click', () => closeModal(false));
@@ -1565,13 +1793,36 @@ async function registerServiceWorker() {
 // ===== Démarrage =====
 async function initApp() {
     try {
-        await initDB();
-        if (navigator.storage && navigator.storage.persist) navigator.storage.persist();
+        try {
+            await initDB();
+        } catch (error) {
+            if (!error || !error.migration) throw error;
+            // Migration annulée : la base d'origine est intacte. On l'ouvre en lecture seule.
+            await openDBSecours();
+            modeSecours = true;
+        }
+        try {
+            if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
+        } catch (_) { /* non disponible */ }
         elements.appVersion.textContent = APP_VERSION;
+        if (!modeSecours) configurerSynchro();   // avant toute écriture : chaque modification est confiée à la synchro
         initEventListeners();
         initAgenda();
         initPointage();
         await registerServiceWorker();
+
+        if (modeSecours) {
+            goHome();
+            showModal('Mise à jour des données impossible',
+                "La conversion de vos données pour le serveur maison n'a pas abouti et a été entièrement annulée : vos données sont intactes. Par sécurité, MesZeuR est en lecture seule. Exportez une copie, puis signalez le problème.",
+                exportAllToZip, null, { confirmLabel: 'Exporter mes données', cancelLabel: 'Fermer', danger: false });
+            return;
+        }
+        if (migrationRapport) {
+            const r = migrationRapport;
+            showToast(`Données mises à jour : ${r.entreprises} entreprise(s), ${r.emplois} emploi(s), ${r.heures} journée(s), ${r.pointages} pointage(s) conservés.`, 'success', 7000);
+            if (r.orphelins.length) console.warn('[MesZeuR] références déjà cassées avant la migration, conservées :', r.orphelins);
+        }
 
         // ?action=… vient du raccourci de l'icône ou du tag NFC ; on le retire pour qu'un rechargement ne le rejoue pas.
         const action = new URLSearchParams(location.search).get('action');

@@ -689,3 +689,4 @@ main:has(> #page-agenda.active) { padding: 0; max-width: none; }
 .dp-pause-select:disabled { opacity: 0.4; }
 .sheet .slider-toggle { background-color: #c5cdd3; }
 .hor-row input[type="time"]::-webkit-calendar-picker-indicator { display: none; }
+.sync-etat { margin: 12px 0 0; }

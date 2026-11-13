@@ -364,6 +364,13 @@
                     </label>
                 </div>
 
+                <div class="settings-section">
+                    <h3>Serveur maison</h3>
+                    <p class="settings-description">Synchronise MesZeuR avec votre serveur à la maison : tout fonctionne hors ligne, les modifications partent et arrivent toutes seules quand le téléphone est sur le Wi-Fi de la maison. L'export / import par fichier reste disponible.</p>
+                    <button id="btn-serveur-maison" class="btn-primary" type="button">🏠 Serveur maison</button>
+                    <p id="sync-etat" class="settings-description sync-etat">⚙️ Serveur non configuré</p>
+                </div>
+
                 <div class="settings-section bilan-global-section">
                     <h3>📊 Bilan global du temps de travail</h3>
                     <button type="button" id="bilan-toggle" class="bilan-details-toggle" aria-expanded="false">
@@ -432,9 +439,11 @@
 </div>
 
 <!-- jszip.min.js doit être placé à côté de index.html (voir instructions) -->
+<script src="sync-maison.js"></script>
 <script src="jszip.min.js"></script>
 <script src="app.js"></script>
 <script src="agenda.js"></script>
 <script src="pointage.js"></script>
+<script src="synchro.js"></script>
 </body>
 </html>

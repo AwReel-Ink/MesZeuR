@@ -1,11 +1,11 @@
 // MesZeuR Service Worker
 // © 2026 LEROY Aurélien - Tous droits réservés
 
-// La version vient de l'URL d'enregistrement (sw.js?v=1.6.0), définie une seule fois dans app.js.
+// La version vient de l'URL d'enregistrement (sw.js?v=1.7.0), définie une seule fois dans app.js.
 const VERSION = new URL(self.location.href).searchParams.get('v') || 'dev';
 const CACHE_NAME = `meszeur-${VERSION}`;
 const BASE = self.registration.scope;   // fonctionne en sous-dossier GitHub Pages comme en local
-const ASSETS = ['', 'index.html', 'style.css', 'app.js', 'agenda.js', 'pointage.js', 'jszip.min.js', 'manifest.json', 'icon192x192.png', 'icon512x512.png']
+const ASSETS = ['', 'index.html', 'style.css', 'sync-maison.js', 'app.js', 'agenda.js', 'pointage.js', 'synchro.js', 'jszip.min.js', 'manifest.json', 'icon192x192.png', 'icon512x512.png']
     .map(p => new URL(p, BASE).href);
 
 self.addEventListener('install', event => {
